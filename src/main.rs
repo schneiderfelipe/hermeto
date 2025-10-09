@@ -3,9 +3,9 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout},
-    style::Stylize,
+    style::{Style, Stylize},
     text::ToSpan,
-    widgets::{Block, Paragraph},
+    widgets::{BarChart, Block, Paragraph},
 };
 
 fn main() -> color_eyre::Result<()> {
@@ -48,7 +48,7 @@ impl App {
     fn render(&mut self, frame: &mut Frame) {
         let outer_layout = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(30), Constraint::Max(30)])
+            .constraints([Constraint::Min(32), Constraint::Max(32)])
             .split(frame.area());
 
         let inner_layout = Layout::default()
@@ -75,8 +75,14 @@ impl App {
             outer_layout[0],
         );
 
+        let data = [("A", 20), ("B", 10), ("C", 15), ("D", 25), ("E", 30)];
         frame.render_widget(
-            Paragraph::new("right panel top").block(Block::bordered()),
+            BarChart::default()
+                .block(Block::bordered().title("Bar Chart".to_span().into_centered_line()))
+                .data(&data)
+                .bar_width(4)
+                .bar_style(Style::default().green())
+                .value_style(Style::default().black().on_green()),
             inner_layout[0],
         );
         frame.render_widget(
