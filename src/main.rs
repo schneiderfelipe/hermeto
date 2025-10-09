@@ -3,9 +3,9 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout},
-    style::{Style, Stylize},
+    style::{Color, Style, Stylize},
     text::ToSpan,
-    widgets::{BarChart, Block, List, ListItem, Paragraph},
+    widgets::{BarChart, Block, BorderType, List, ListItem, Padding, Paragraph, Row, Table},
 };
 
 fn main() -> color_eyre::Result<()> {
@@ -51,7 +51,12 @@ impl App {
             .constraints([Constraint::Min(32), Constraint::Max(32)])
             .split(frame.area());
 
-        let inner_layout = Layout::default()
+        let inner_layout_left = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Max(32), Constraint::Min(32)])
+            .split(outer_layout[0]);
+
+        let inner_layout_right = Layout::default()
             .direction(Direction::Vertical)
             .constraints(Constraint::from_percentages([25, 75]))
             .split(outer_layout[1]);
@@ -63,16 +68,36 @@ impl App {
             Press `Esc`, `Ctrl-C` or `q` to stop running.",
             )
             .block(
-                Block::bordered().title(
-                    "Ratatui simple template"
-                        .to_span()
-                        .into_centered_line()
-                        .bold()
-                        .blue(),
-                ),
+                Block::bordered()
+                    .title("Ratatui simple template".bold().blue().into_centered_line()),
             )
             .centered(),
-            outer_layout[0],
+            inner_layout_left[0],
+        );
+
+        frame.render_widget(
+            Table::new(
+                [
+                    Row::new(["Ábaco", "Bom pra calcular", "20.00"]),
+                    Row::new(["Lapiseira", "Bom pra escrever", "10.00"]),
+                ],
+                Constraint::from_mins([32, 32, 32]),
+            )
+            .column_spacing(2)
+            .style(Style::default().fg(Color::Magenta))
+            .header(
+                Row::new(["Name", "Description", "Price"])
+                    .underlined()
+                    .bold(),
+            )
+            .block(
+                Block::bordered()
+                    .padding(Padding::uniform(1))
+                    .border_type(BorderType::Rounded)
+                    .title("Table".bold().into_centered_line()),
+            )
+            .cell_highlight_style(Style::default().reversed()),
+            inner_layout_left[1],
         );
 
         let data = [("A", 20), ("B", 10), ("C", 15), ("D", 25), ("E", 30)];
@@ -83,7 +108,7 @@ impl App {
                 .bar_width(4)
                 .bar_style(Style::default().green())
                 .value_style(Style::default().black().on_green()),
-            inner_layout[0],
+            inner_layout_right[0],
         );
 
         frame.render_widget(
@@ -102,7 +127,7 @@ impl App {
             .style(Style::default().white())
             .highlight_style(Style::default().black().on_yellow())
             .highlight_symbol(">> "),
-            inner_layout[1],
+            inner_layout_right[1],
         )
     }
 
