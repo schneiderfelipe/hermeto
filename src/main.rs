@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Style, Stylize},
     text::ToSpan,
-    widgets::{BarChart, Block, Paragraph},
+    widgets::{BarChart, Block, List, ListItem, Paragraph},
 };
 
 fn main() -> color_eyre::Result<()> {
@@ -64,7 +64,7 @@ impl App {
             )
             .block(
                 Block::bordered().title(
-                    "Ratatui Simple Template"
+                    "Ratatui simple template"
                         .to_span()
                         .into_centered_line()
                         .bold()
@@ -78,19 +78,30 @@ impl App {
         let data = [("A", 20), ("B", 10), ("C", 15), ("D", 25), ("E", 30)];
         frame.render_widget(
             BarChart::default()
-                .block(Block::bordered().title("Bar Chart".to_span().into_centered_line()))
+                .block(Block::bordered().title("Bar chart".to_span().into_centered_line()))
                 .data(&data)
                 .bar_width(4)
                 .bar_style(Style::default().green())
                 .value_style(Style::default().black().on_green()),
             inner_layout[0],
         );
+
         frame.render_widget(
-            Paragraph::new("right panel bottom").block(
+            List::new([
+                ListItem::new("Item 1"),
+                ListItem::new("Item 2"),
+                ListItem::new("Item 3"),
+                ListItem::new("Item 4"),
+                ListItem::new("Item 5"),
+            ])
+            .block(
                 Block::bordered()
                     .green()
-                    .title("My Blocky Boy".to_span().into_centered_line()),
-            ),
+                    .title("List widget".to_span().into_centered_line()),
+            )
+            .style(Style::default().white())
+            .highlight_style(Style::default().black().on_yellow())
+            .highlight_symbol(">> "),
             inner_layout[1],
         )
     }
