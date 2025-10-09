@@ -2,8 +2,9 @@ use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
     DefaultTerminal, Frame,
+    layout::{Constraint, Direction, Layout},
     style::Stylize,
-    text::Line,
+    text::ToSpan,
     widgets::{Block, Paragraph},
 };
 
@@ -45,18 +46,46 @@ impl App {
     /// - <https://docs.rs/ratatui/latest/ratatui/widgets/index.html>
     /// - <https://github.com/ratatui/ratatui/tree/main/ratatui-widgets/examples>
     fn render(&mut self, frame: &mut Frame) {
-        let title = Line::from("Ratatui Simple Template")
-            .bold()
-            .blue()
-            .centered();
-        let text = "Hello, Ratatui!\n\n\
-            Created using https://github.com/ratatui/templates\n\
-            Press `Esc`, `Ctrl-C` or `q` to stop running.";
+        let outer_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(30), Constraint::Max(30)])
+            .split(frame.area());
+
+        let inner_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(Constraint::from_percentages([25, 75]))
+            .split(outer_layout[1]);
+
         frame.render_widget(
-            Paragraph::new(text)
-                .block(Block::bordered().title(title))
-                .centered(),
-            frame.area(),
+            Paragraph::new(
+                "Hello, Ratatui!\n\n\
+            Created using https://github.com/ratatui/templates\n\
+            Press `Esc`, `Ctrl-C` or `q` to stop running.",
+            )
+            .block(
+                Block::bordered().title(
+                    "Ratatui Simple Template"
+                        .to_span()
+                        .into_centered_line()
+                        .bold()
+                        .blue(),
+                ),
+            )
+            .centered(),
+            outer_layout[0],
+        );
+
+        frame.render_widget(
+            Paragraph::new("right panel top").block(Block::bordered()),
+            inner_layout[0],
+        );
+        frame.render_widget(
+            Paragraph::new("right panel bottom").block(
+                Block::bordered()
+                    .green()
+                    .title("My Blocky Boy".to_span().into_centered_line()),
+            ),
+            inner_layout[1],
         )
     }
 
