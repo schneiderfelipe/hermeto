@@ -1,175 +1,150 @@
+use std::io;
+
 use color_eyre::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, KeyEventKind};
 use ratatui::{
     DefaultTerminal, Frame,
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Style, Stylize},
-    text::ToSpan,
-    widgets::{BarChart, Block, BorderType, List, ListItem, Padding, Paragraph, Row, Table, Tabs},
+    buffer::Buffer,
+    layout::Rect,
+    style::Stylize,
+    symbols::border,
+    text::Line,
+    widgets::{Block, Paragraph, Widget},
 };
 
-fn main() -> color_eyre::Result<()> {
+fn main() -> Result<()> {
     color_eyre::install()?;
-    let terminal = ratatui::init();
-    let result = App::new().run(terminal);
-    ratatui::restore();
-    result
+    let mut terminal = ratatui::try_init()?;
+    let result = Application::default().run(&mut terminal);
+    ratatui::try_restore()?;
+    Ok(result?)
 }
 
-/// The main application which holds the state and logic of the application.
 #[derive(Debug, Default)]
-pub struct App {
-    /// Is the application running?
-    running: bool,
+struct Application {
+    counter: u8,
+    is_running: bool,
 }
 
-impl App {
-    /// Construct a new instance of [`App`].
-    pub fn new() -> Self {
-        Self::default()
-    }
+#[derive(Debug)]
+enum Message {
+    Quit,
+    Decrement,
+    Increment,
+}
 
-    /// Run the application's main loop.
-    pub fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
-        self.running = true;
-        while self.running {
-            terminal.draw(|frame| self.render(frame))?;
-            self.handle_crossterm_events()?;
+impl Application {
+    fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+        self.is_running = true;
+        while self.is_running {
+            terminal.draw(|frame| self.draw(frame))?;
+            if let Some(message) = self.handle_events()? {
+                self.handle_message(message)
+            }
         }
         Ok(())
     }
 
-    /// Renders the user interface.
-    ///
-    /// This is where you add new widgets. See the following resources for more information:
-    ///
-    /// - <https://docs.rs/ratatui/latest/ratatui/widgets/index.html>
-    /// - <https://github.com/ratatui/ratatui/tree/main/ratatui-widgets/examples>
-    fn render(&mut self, frame: &mut Frame) {
-        let outer_outer_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Max(3), Constraint::Min(3)])
-            .split(frame.area());
-
-        let outer_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(32), Constraint::Max(32)])
-            .split(outer_outer_layout[1]);
-
-        let inner_layout_left = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Max(32), Constraint::Min(32)])
-            .split(outer_layout[0]);
-
-        let inner_layout_right = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(Constraint::from_percentages([25, 75]))
-            .split(outer_layout[1]);
-
-        frame.render_widget(
-            Paragraph::new(
-                "Hello, Ratatui!\n\n\
-            Created using https://github.com/ratatui/templates\n\
-            Press `Esc`, `Ctrl-C` or `q` to stop running.",
-            )
-            .block(
-                Block::bordered()
-                    .title("Ratatui simple template".bold().blue().into_centered_line()),
-            )
-            .centered(),
-            inner_layout_left[0],
-        );
-
-        frame.render_widget(
-            Tabs::new(["Home", "News", "About"])
-                .select(0)
-                .block(Block::bordered()),
-            outer_outer_layout[0],
-        );
-
-        frame.render_widget(
-            Table::new(
-                [
-                    Row::new(["Ábaco", "Bom pra calcular", "20.00"]),
-                    Row::new(["Lapiseira", "Bom pra escrever", "10.00"]),
-                ],
-                Constraint::from_mins([32, 32, 32]),
-            )
-            .column_spacing(2)
-            .style(Style::default().fg(Color::Magenta))
-            .header(
-                Row::new(["Name", "Description", "Price"])
-                    .underlined()
-                    .bold(),
-            )
-            .block(
-                Block::bordered()
-                    .padding(Padding::uniform(1))
-                    .border_type(BorderType::Rounded)
-                    .title("Table".bold().into_centered_line()),
-            )
-            .cell_highlight_style(Style::default().reversed()),
-            inner_layout_left[1],
-        );
-
-        let data = [("A", 20), ("B", 10), ("C", 15), ("D", 25), ("E", 30)];
-        frame.render_widget(
-            BarChart::default()
-                .block(Block::bordered().title("Bar chart".to_span().into_centered_line()))
-                .data(&data)
-                .bar_width(4)
-                .bar_style(Style::default().green())
-                .value_style(Style::default().black().on_green()),
-            inner_layout_right[0],
-        );
-
-        frame.render_widget(
-            List::new([
-                ListItem::new("Item 1"),
-                ListItem::new("Item 2"),
-                ListItem::new("Item 3"),
-                ListItem::new("Item 4"),
-                ListItem::new("Item 5"),
-            ])
-            .block(
-                Block::bordered()
-                    .green()
-                    .title("List widget".to_span().into_centered_line()),
-            )
-            .style(Style::default().white())
-            .highlight_style(Style::default().black().on_yellow())
-            .highlight_symbol(">> "),
-            inner_layout_right[1],
-        )
+    fn draw(&self, frame: &mut Frame) {
+        frame.render_widget(self, frame.area())
     }
 
-    /// Reads the crossterm events and updates the state of [`App`].
-    ///
-    /// If your application needs to perform work in between handling events, you can use the
-    /// [`event::poll`] function to check if there are any events available with a timeout.
-    fn handle_crossterm_events(&mut self) -> Result<()> {
+    fn handle_events(&self) -> io::Result<Option<Message>> {
         match event::read()? {
-            // it's important to check KeyEventKind::Press to avoid handling key release events
-            Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key_event(key),
-            Event::Mouse(_) => {}
-            Event::Resize(_, _) => {}
-            _ => {}
-        }
-        Ok(())
-    }
-
-    /// Handles the key events and updates the state of [`App`].
-    fn on_key_event(&mut self, key: KeyEvent) {
-        match (key.modifiers, key.code) {
-            (_, KeyCode::Esc | KeyCode::Char('q'))
-            | (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => self.quit(),
-            // Add other key handlers here.
-            _ => {}
+            event::Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                match key_event.code {
+                    event::KeyCode::Char('q') => Ok(Some(Message::Quit)),
+                    event::KeyCode::Left => Ok(Some(Message::Decrement)),
+                    event::KeyCode::Right => Ok(Some(Message::Increment)),
+                    _ => Ok(None),
+                }
+            }
+            _ => Ok(None),
         }
     }
 
-    /// Set running to false to quit the application.
-    fn quit(&mut self) {
-        self.running = false;
+    fn handle_message(&mut self, message: Message) {
+        match message {
+            Message::Quit => self.is_running = false,
+            Message::Decrement => self.counter = self.counter.saturating_sub(1),
+            Message::Increment => self.counter = self.counter.saturating_add(1),
+        }
+    }
+}
+
+impl Widget for &Application {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let title = "Counter".bold();
+        let instructions = Line::from(vec![
+            "Decrement".into(),
+            " ".into(),
+            "<Left>".blue().bold(),
+            " ".into(),
+            "Increment".into(),
+            " ".into(),
+            "<Right>".blue().bold(),
+            " ".into(),
+            "Quit".into(),
+            " ".into(),
+            "<Q>".blue().bold(),
+        ]);
+        let block = Block::bordered()
+            .title(title.into_centered_line())
+            .title_bottom(instructions.centered())
+            .border_set(border::THICK);
+        let counter_text = Line::from(vec![
+            "Value:".into(),
+            " ".into(),
+            self.counter.to_string().yellow(),
+        ]);
+        Paragraph::new(counter_text)
+            .centered()
+            .block(block)
+            .render(area, buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::style::Style;
+
+    use super::*;
+
+    #[test]
+    fn test_render() {
+        let app = Application::default();
+        let mut buf = Buffer::empty(Rect::new(0, 0, 50, 4));
+
+        app.render(buf.area, &mut buf);
+
+        let mut expected = Buffer::with_lines([
+            "┏━━━━━━━━━━━━━━━━━━━━Counter━━━━━━━━━━━━━━━━━━━━━┓",
+            "┃                    Value: 0                    ┃",
+            "┃                                                ┃",
+            "┗━━Decrement <Left> Increment <Right> Quit <Q>━━━┛",
+        ]);
+        let title_style = Style::default().bold();
+        let counter_style = Style::default().yellow();
+        let key_style = Style::default().blue().bold();
+        expected.set_style(Rect::new(21, 0, 7, 1), title_style);
+        expected.set_style(Rect::new(28, 1, 1, 1), counter_style);
+        expected.set_style(Rect::new(13, 3, 6, 1), key_style);
+        expected.set_style(Rect::new(30, 3, 7, 1), key_style);
+        expected.set_style(Rect::new(43, 3, 3, 1), key_style);
+
+        assert_eq!(buf, expected)
+    }
+
+    #[test]
+    fn test_handle_events() {
+        let mut app = Application::default();
+        app.handle_message(Message::Increment);
+        assert_eq!(app.counter, 1);
+
+        app.handle_message(Message::Decrement);
+        assert_eq!(app.counter, 0);
+
+        app.handle_message(Message::Quit);
+        assert!(!app.is_running);
     }
 }
