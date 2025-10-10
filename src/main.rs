@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Style, Stylize},
     text::ToSpan,
-    widgets::{BarChart, Block, BorderType, List, ListItem, Padding, Paragraph, Row, Table},
+    widgets::{BarChart, Block, BorderType, List, ListItem, Padding, Paragraph, Row, Table, Tabs},
 };
 
 fn main() -> color_eyre::Result<()> {
@@ -46,10 +46,15 @@ impl App {
     /// - <https://docs.rs/ratatui/latest/ratatui/widgets/index.html>
     /// - <https://github.com/ratatui/ratatui/tree/main/ratatui-widgets/examples>
     fn render(&mut self, frame: &mut Frame) {
+        let outer_outer_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Max(3), Constraint::Min(3)])
+            .split(frame.area());
+
         let outer_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(32), Constraint::Max(32)])
-            .split(frame.area());
+            .split(outer_outer_layout[1]);
 
         let inner_layout_left = Layout::default()
             .direction(Direction::Vertical)
@@ -73,6 +78,13 @@ impl App {
             )
             .centered(),
             inner_layout_left[0],
+        );
+
+        frame.render_widget(
+            Tabs::new(["Home", "News", "About"])
+                .select(0)
+                .block(Block::bordered()),
+            outer_outer_layout[0],
         );
 
         frame.render_widget(
