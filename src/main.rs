@@ -13,9 +13,9 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Stylize,
     text::{Line, ToSpan},
-    widgets::{Paragraph, Widget},
+    widgets::{StatefulWidget, Widget},
 };
-use std::{collections::BTreeSet, io, iter::once};
+use std::{collections::BTreeMap, fmt::Display, io, iter::once};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -35,7 +35,7 @@ fn main() -> Result<()> {
 
 #[derive(Debug, Default)]
 struct Tuia {
-    notes: BTreeSet<Note>,
+    state: TonnetzState,
     is_running: bool,
 }
 
@@ -84,11 +84,11 @@ impl Tuia {
         Ok(())
     }
 
-    fn draw(&self, frame: &mut Frame) {
+    fn draw(&mut self, frame: &mut Frame) {
         let areas = Layout::vertical([Constraint::Fill(1), Constraint::Max(1)]).split(frame.area());
-        frame.render_widget(&Tonnetz, areas[0]);
+        frame.render_stateful_widget(&Tonnetz, areas[0], &mut self.state);
         frame.render_widget(
-            format!("{:#?}", self.notes).magenta().rapid_blink(),
+            format!("{:#?}", self.state).magenta().rapid_blink(),
             areas[1],
         )
     }
@@ -106,33 +106,13 @@ impl Tuia {
                 modifiers: _,
                 kind: KeyEventKind::Press,
                 state: _,
-            }) => {
-                if FIRST_ROW.contains_key(&c) {
-                    Ok(Some(Message::NoteOn(FIRST_ROW[&c])))
-                } else if SECOND_ROW.contains_key(&c) {
-                    Ok(Some(Message::NoteOn(SECOND_ROW[&c])))
-                } else if THIRD_ROW.contains_key(&c) {
-                    Ok(Some(Message::NoteOn(THIRD_ROW[&c])))
-                } else {
-                    Ok(None)
-                }
-            }
+            }) if self.state.is_allowed(&c) => Ok(Some(Message::NoteOn(c))),
             Event::Key(KeyEvent {
                 code: KeyCode::Char(c),
                 modifiers: _,
                 kind: KeyEventKind::Release,
                 state: _,
-            }) => {
-                if FIRST_ROW.contains_key(&c) {
-                    Ok(Some(Message::NoteOff(FIRST_ROW[&c])))
-                } else if SECOND_ROW.contains_key(&c) {
-                    Ok(Some(Message::NoteOff(SECOND_ROW[&c])))
-                } else if THIRD_ROW.contains_key(&c) {
-                    Ok(Some(Message::NoteOff(THIRD_ROW[&c])))
-                } else {
-                    Ok(None)
-                }
-            }
+            }) if self.state.is_allowed(&c) => Ok(Some(Message::NoteOff(c))),
             _ => Ok(None),
         }
     }
@@ -140,12 +120,8 @@ impl Tuia {
     fn handle_message(&mut self, message: Message) {
         match message {
             Message::Quit => self.is_running = false,
-            Message::NoteOn(c) => {
-                self.notes.insert(c);
-            }
-            Message::NoteOff(c) => {
-                self.notes.remove(&c);
-            }
+            Message::NoteOn(c) => self.state.insert(c),
+            Message::NoteOff(c) => self.state.remove(&c),
         }
     }
 }
@@ -153,8 +129,8 @@ impl Tuia {
 #[derive(Debug)]
 enum Message {
     Quit,
-    NoteOn(Note),
-    NoteOff(Note),
+    NoteOn(char),
+    NoteOff(char),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -173,34 +149,120 @@ enum Note {
     B,
 }
 
+impl Display for Note {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Note::C => write!(f, "C"),
+            Note::Cs => write!(f, "C#"),
+            Note::D => write!(f, "D"),
+            Note::Ds => write!(f, "D#"),
+            Note::E => write!(f, "E"),
+            Note::F => write!(f, "F"),
+            Note::Fs => write!(f, "F#"),
+            Note::G => write!(f, "G"),
+            Note::Gs => write!(f, "G#"),
+            Note::A => write!(f, "A"),
+            Note::As => write!(f, "A#"),
+            Note::B => write!(f, "B"),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct Tonnetz;
 
-impl Widget for &Tonnetz {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let f = |c: Option<char>| {
-            c.map(|c| format!("< {}>", c.to_uppercase()).blue().bold())
-                .unwrap_or("   ".into())
+#[derive(Debug, Default)]
+struct TonnetzState(BTreeMap<char, Note>);
+
+impl TonnetzState {
+    fn is_allowed(&self, c: &char) -> bool {
+        if FIRST_ROW.contains_key(&c) | SECOND_ROW.contains_key(&c) | THIRD_ROW.contains_key(&c) {
+            true
+        } else {
+            false
+        }
+    }
+    fn is_pressed(&self, c: &char) -> bool {
+        self.0.contains_key(c)
+    }
+    fn get(&self, c: &char) -> Option<&Note> {
+        self.0.get(c)
+    }
+    fn insert(&mut self, c: char) {
+        if FIRST_ROW.contains_key(&c) {
+            self.0.insert(c, FIRST_ROW[&c]);
+        } else if SECOND_ROW.contains_key(&c) {
+            self.0.insert(c, SECOND_ROW[&c]);
+        } else if THIRD_ROW.contains_key(&c) {
+            self.0.insert(c, THIRD_ROW[&c]);
+        }
+    }
+    fn remove(&mut self, c: &char) {
+        self.0.remove(c);
+    }
+}
+
+impl StatefulWidget for &Tonnetz {
+    type State = TonnetzState;
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let space = "   ".to_span();
+        let f = |c: char| {
+            format!("<{: ^2}>", c.to_uppercase().to_string())
+                .blue()
+                .bold()
+        };
+        let g = |c: char| {
+            format!("<{: ^2}>", state.get(&c).unwrap().to_string())
+                .blue()
+                .bold()
         };
         let lines = Layout::vertical(Constraint::from_maxes([1, 1, 1])).split(area);
         Line::from(
             FIRST_ROW
                 .keys()
-                .map(|c| f(Some(*c)))
-                .intersperse(f(None))
+                .map(|c| {
+                    if state.is_pressed(c) {
+                        g(*c).yellow()
+                    } else {
+                        f(*c)
+                    }
+                })
+                .intersperse(space.clone())
                 .collect::<Vec<_>>(),
         )
         .render(lines[0], buf);
         Line::from(
-            once(f(None))
-                .chain(SECOND_ROW.keys().map(|c| f(Some(*c))).intersperse(f(None)))
+            once(space.clone())
+                .chain(
+                    SECOND_ROW
+                        .keys()
+                        .map(|c| {
+                            if state.is_pressed(c) {
+                                g(*c).yellow()
+                            } else {
+                                f(*c)
+                            }
+                        })
+                        .intersperse(space.clone()),
+                )
                 .collect::<Vec<_>>(),
         )
         .render(lines[1], buf);
         Line::from(
-            once(f(None))
-                .chain(once(f(None)))
-                .chain(THIRD_ROW.keys().map(|c| f(Some(*c))).intersperse(f(None)))
+            once(space.clone())
+                .chain(once(space.clone()))
+                .chain(
+                    THIRD_ROW
+                        .keys()
+                        .map(|c| {
+                            if state.is_pressed(c) {
+                                g(*c).yellow()
+                            } else {
+                                f(*c)
+                            }
+                        })
+                        .intersperse(space),
+                )
                 .collect::<Vec<_>>(),
         )
         .render(lines[2], buf)
