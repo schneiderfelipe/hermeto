@@ -11,7 +11,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Stylize},
     text::Line,
-    widgets::{Paragraph, StatefulWidget, Widget},
+    widgets::{Paragraph, Widget},
 };
 use rodio::{
     OutputStreamBuilder, Source,
@@ -87,9 +87,13 @@ impl Application {
             loop {
                 let frequency = frequency_rx.recv()?;
                 stream_handle.mixer().add(
-                    SignalGenerator::new(48000, frequency, Function::Sine)
-                        .amplify(0.1)
-                        .take_duration(Duration::from_millis(1000)),
+                    SignalGenerator::new(
+                        stream_handle.config().sample_rate(),
+                        frequency,
+                        Function::Sine,
+                    )
+                    .amplify_normalized(0.2)
+                    .take_duration(Duration::from_millis(1000)),
                 );
             }
         });
@@ -171,7 +175,7 @@ impl Widget for &Tonnetz {
                     .chain([(self.keyboard_layout.rows.len() - n - 1) as u16]),
             ))
             .split(*row_layout);
-            for (k, (key_layout, key)) in keys_layout[1..].iter().zip(row).enumerate() {
+            for (key_layout, key) in keys_layout[1..].iter().zip(row) {
                 let note_number = self.note_number(key).unwrap();
                 let note = match note_number % 12 {
                     0 => "C",
