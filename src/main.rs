@@ -3,10 +3,11 @@ use std::{sync::mpsc, thread};
 use color_eyre::Result;
 use crossterm::event;
 use ratatui::{
-    Terminal,
-    layout::{Constraint, Layout},
-    prelude::Backend,
-    widgets::Gauge,
+    DefaultTerminal,
+    buffer::Buffer,
+    layout::Rect,
+    style::Stylize,
+    widgets::{StatefulWidget, Widget},
 };
 
 fn main() -> Result<()> {
@@ -20,59 +21,51 @@ fn main() -> Result<()> {
 #[derive(Debug, Default)]
 struct Application {
     is_running: bool,
-    progress: u8,
+    state: TonnetzState,
 }
 
 #[derive(Debug)]
 enum Message {
     Quit,
-    Increment,
-    Decrement,
 }
 
 impl Application {
-    fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+    fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        self.is_running = true;
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || -> Result<()> {
-            loop {
-                match event::read()? {
-                    event::Event::Key(event::KeyEvent {
-                        code: event::KeyCode::Char('q'),
-                        modifiers: _,
-                        kind: event::KeyEventKind::Press,
-                        state: _,
-                    }) => tx.send(Message::Quit)?,
-                    event::Event::Key(event::KeyEvent {
-                        code: event::KeyCode::Up,
-                        modifiers: _,
-                        kind: event::KeyEventKind::Press,
-                        state: _,
-                    }) => tx.send(Message::Increment)?,
-                    event::Event::Key(event::KeyEvent {
-                        code: event::KeyCode::Down,
-                        modifiers: _,
-                        kind: event::KeyEventKind::Press,
-                        state: _,
-                    }) => tx.send(Message::Decrement)?,
-                    _ => (),
-                }
+            if let event::Event::Key(event::KeyEvent {
+                code: event::KeyCode::Esc,
+                modifiers,
+                kind: event::KeyEventKind::Press,
+                state,
+            }) = event::read()?
+            {
+                tx.send(Message::Quit)?;
             }
+            Ok(())
         });
-        self.is_running = true;
         while self.is_running {
             terminal.draw(|frame| {
-                let layout = Layout::vertical(Constraint::from_maxes([1])).split(frame.area());
-                frame.render_widget(
-                    Gauge::default().ratio((self.progress as f64 / 256_f64).max(0.0)),
-                    layout[0],
-                )
+                frame.render_stateful_widget(Tonnetz::default(), frame.area(), &mut self.state);
             })?;
             match rx.recv()? {
                 Message::Quit => self.is_running = false,
-                Message::Increment => self.progress = self.progress.wrapping_add(1),
-                Message::Decrement => self.progress = self.progress.wrapping_sub(1),
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct Tonnetz {}
+
+#[derive(Debug, Default)]
+struct TonnetzState {}
+
+impl StatefulWidget for Tonnetz {
+    type State = TonnetzState;
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        "Placeholder for Tonnetz".blue().render(area, buf)
     }
 }
