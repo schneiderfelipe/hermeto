@@ -12,7 +12,8 @@ use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
     style::{Color, Stylize},
-    widgets::{StatefulWidget, Widget},
+    text::Line,
+    widgets::{Paragraph, StatefulWidget, Widget},
 };
 
 fn main() -> Result<()> {
@@ -101,9 +102,19 @@ struct Tonnetz {
     keyboard_layout: KeyboardLayout,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct TonnetzState {
     pressed: HashSet<char>,
+    base_note: u8,
+}
+
+impl Default for TonnetzState {
+    fn default() -> Self {
+        Self {
+            pressed: Default::default(),
+            base_note: 27,
+        }
+    }
 }
 
 impl StatefulWidget for &Tonnetz {
@@ -134,14 +145,36 @@ impl StatefulWidget for &Tonnetz {
                     .chain([(self.keyboard_layout.rows.len() - n - 1) as u16]),
             ))
             .split(*row_layout);
-            for (key_layout, key) in keys_layout[1..].iter().zip(row) {
-                format!("<{key}>")
-                    .fg(if state.pressed.contains(key) {
-                        Color::Yellow
-                    } else {
-                        Color::Blue
-                    })
-                    .render(*key_layout, buf)
+            for (k, (key_layout, key)) in keys_layout[1..].iter().zip(row).enumerate() {
+                let note_number = state.base_note + n as u8 * 4 + k as u8 * 7;
+                let note = match note_number % 12 {
+                    0 => "C",
+                    1 => "C#/Db",
+                    2 => "D",
+                    3 => "D#/Eb",
+                    4 => "E",
+                    5 => "F",
+                    6 => "F#/Gb",
+                    7 => "G",
+                    8 => "G#/Ab",
+                    9 => "A",
+                    10 => "A#/Bb",
+                    11 => "B",
+                    _ => unreachable!(),
+                };
+                Paragraph::new(vec![
+                    Line::from(note).bold(),
+                    Line::from(format!("{note_number}")),
+                    Line::from(format!("<{key}>", key = key.to_uppercase()).fg(
+                        if state.pressed.contains(key) {
+                            Color::Yellow
+                        } else {
+                            Color::Blue
+                        },
+                    )),
+                ])
+                .centered()
+                .render(*key_layout, buf)
             }
         }
     }
