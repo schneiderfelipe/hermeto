@@ -1,5 +1,3 @@
-use std::{collections::HashSet, sync::mpsc, thread};
-
 use color_eyre::Result;
 use crossterm::{
     event::{
@@ -15,6 +13,11 @@ use ratatui::{
     text::Line,
     widgets::{Paragraph, StatefulWidget, Widget},
 };
+use rodio::{
+    OutputStreamBuilder, Source,
+    source::{Function, SignalGenerator},
+};
+use std::{collections::HashSet, sync::mpsc, thread, time::Duration};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -33,7 +36,6 @@ fn main() -> Result<()> {
 struct Application {
     is_running: bool,
     tonnetz: Tonnetz,
-    state: TonnetzState,
 }
 
 #[derive(Debug)]
@@ -46,7 +48,7 @@ enum Message {
 impl Application {
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         self.is_running = true;
-        let (tx, rx) = mpsc::channel();
+        let (message_tx, message_rx) = mpsc::channel();
         let keyboard_layout = self.tonnetz.keyboard_layout.clone();
         thread::spawn(move || -> Result<()> {
             loop {
@@ -57,7 +59,7 @@ impl Application {
                         kind: event::KeyEventKind::Press,
                         state,
                     }) => {
-                        tx.send(Message::Quit)?;
+                        message_tx.send(Message::Quit)?;
                     }
                     event::Event::Key(event::KeyEvent {
                         code: event::KeyCode::Char(key),
@@ -65,7 +67,7 @@ impl Application {
                         kind: event::KeyEventKind::Press,
                         state,
                     }) if keyboard_layout.contains(&key) => {
-                        tx.send(Message::Press(key))?;
+                        message_tx.send(Message::Press(key))?;
                     }
                     event::Event::Key(event::KeyEvent {
                         code: event::KeyCode::Char(key),
@@ -73,23 +75,41 @@ impl Application {
                         kind: event::KeyEventKind::Release,
                         state,
                     }) if keyboard_layout.contains(&key) => {
-                        tx.send(Message::Release(key))?;
+                        message_tx.send(Message::Release(key))?;
                     }
                     _ => (),
                 }
             }
         });
+        let (frequency_tx, frequency_rx) = mpsc::channel();
+        thread::spawn(move || -> Result<()> {
+            let stream_handle = OutputStreamBuilder::open_default_stream()?;
+            loop {
+                let frequency = frequency_rx.recv()?;
+                stream_handle.mixer().add(
+                    SignalGenerator::new(48000, frequency, Function::Sine)
+                        .amplify(0.1)
+                        .take_duration(Duration::from_millis(1000)),
+                );
+            }
+        });
         while self.is_running {
             terminal.draw(|frame| {
-                frame.render_stateful_widget(&self.tonnetz, frame.area(), &mut self.state);
+                frame.render_widget(&self.tonnetz, frame.area());
             })?;
-            match rx.recv()? {
+            match message_rx.recv()? {
                 Message::Quit => self.is_running = false,
                 Message::Press(key) => {
-                    self.state.pressed.insert(key);
+                    self.tonnetz.pressed.insert(key);
+                    frequency_tx.send(
+                        440.0
+                            * 2_f32.powf(
+                                (self.tonnetz.note_number(&key).unwrap() as f32 - 69.0) / 12.0,
+                            ),
+                    )?;
                 }
                 Message::Release(key) => {
-                    self.state.pressed.remove(&key);
+                    self.tonnetz.pressed.remove(&key);
                 }
             }
         }
@@ -97,29 +117,35 @@ impl Application {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Tonnetz {
     keyboard_layout: KeyboardLayout,
-}
-
-#[derive(Debug)]
-struct TonnetzState {
     pressed: HashSet<char>,
     base_note: u8,
 }
 
-impl Default for TonnetzState {
+impl Tonnetz {
+    fn note_number(&self, key: &char) -> Option<u8> {
+        if let Some((n, k)) = self.keyboard_layout.get_position(key) {
+            Some(self.base_note + n as u8 * 4 + k as u8 * 7)
+        } else {
+            None
+        }
+    }
+}
+
+impl Default for Tonnetz {
     fn default() -> Self {
         Self {
+            keyboard_layout: Default::default(),
             pressed: Default::default(),
             base_note: 27,
         }
     }
 }
 
-impl StatefulWidget for &Tonnetz {
-    type State = TonnetzState;
-    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+impl Widget for &Tonnetz {
+    fn render(self, area: Rect, buf: &mut Buffer) {
         let rows_layout =
             Layout::vertical(Constraint::from_fills(vec![
                 1;
@@ -146,7 +172,7 @@ impl StatefulWidget for &Tonnetz {
             ))
             .split(*row_layout);
             for (k, (key_layout, key)) in keys_layout[1..].iter().zip(row).enumerate() {
-                let note_number = state.base_note + n as u8 * 4 + k as u8 * 7;
+                let note_number = self.note_number(key).unwrap();
                 let note = match note_number % 12 {
                     0 => "C",
                     1 => "C#/Db",
@@ -166,7 +192,7 @@ impl StatefulWidget for &Tonnetz {
                     Line::from(note).bold(),
                     Line::from(format!("{note_number}")),
                     Line::from(format!("<{key}>", key = key.to_uppercase()).fg(
-                        if state.pressed.contains(key) {
+                        if self.pressed.contains(key) {
                             Color::Yellow
                         } else {
                             Color::Blue
@@ -205,5 +231,16 @@ impl KeyboardLayout {
             }
         }
         false
+    }
+
+    fn get_position(&self, key: &char) -> Option<(usize, usize)> {
+        for (n, row) in self.rows.iter().enumerate() {
+            for (k, candidate) in row.iter().enumerate() {
+                if candidate == key {
+                    return Some((n, k));
+                }
+            }
+        }
+        None
     }
 }
