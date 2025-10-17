@@ -1,7 +1,7 @@
 [package]
-name = "hello-ratatui"
+name = "tonnetz"
 version = "0.1.0"
-description = "Just following a tutorial"
+description = "A (toy) terminal musical instrument"
 authors = ["Felipe S. S. Schneider <schneider.felipe.5@gmail.com>"]
 license = "MIT"
 edition = "2024"

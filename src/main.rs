@@ -1,4 +1,4 @@
-use color_eyre::{Result, owo_colors::OwoColorize};
+use color_eyre::Result;
 use crossterm::{
     event::{
         self, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -17,7 +17,7 @@ use rodio::{
     OutputStreamBuilder, Source,
     source::{Function, SignalGenerator},
 };
-use std::{collections::HashSet, rc::Rc, sync::mpsc, thread, time::Duration};
+use std::{collections::HashSet, sync::mpsc, thread, time::Duration};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -157,19 +157,20 @@ impl<const N: u8, const K: u8> Tonnetz<N, K> {
     }
 }
 
-fn split_diamonds_layout(n_rows: usize, n_cols: usize, area: Rect) -> Vec<Rc<[Rect]>> {
+fn split_diamonds_layout(n_rows: usize, n_cols: usize, area: Rect) -> Vec<Vec<Rect>> {
     Layout::vertical(Constraint::from_fills(vec![1; n_rows]))
         .split(area)
         .iter()
         .enumerate()
-        .map(move |(n, row_layout)| {
+        .map(|(n, row_layout)| {
             Layout::horizontal(Constraint::from_fills(
                 [n as u16]
                     .into_iter()
                     .chain(vec![2; n_cols])
                     .chain([(n_rows - n - 1) as u16]),
             ))
-            .split(*row_layout)
+            .split(*row_layout)[1..]
+                .into()
         })
         .collect()
 }
@@ -181,35 +182,37 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
             .rows()
             .zip(split_diamonds_layout(n_rows, max_n_keys, area))
             .for_each(|(row, keys_layout)| {
-                row.zip(&keys_layout[1..]).for_each(|(key, key_layout)| {
-                    let note = self.note(&key).unwrap();
-                    let paragraph = Paragraph::new(vec![
-                        Line::from({
-                            let (s, f) = note.names();
-                            let octave = note.octave();
-                            f.map_or_else(
-                                || format!("{s}{octave}"),
-                                |f| format!("{s}{octave}/{f}{octave}"),
-                            )
-                        })
-                        .bold(),
-                        Line::from(format!("{n}", n = u8::from(note))),
-                        Line::from(format!("{f:.3} Hz", f = note.frequency())),
-                        Line::from(format!("<{key}>", key = key.to_uppercase()).blue()),
-                    ])
-                    .centered()
-                    .block(Block::bordered())
-                    .bg(if self.is_pressed(&key) {
-                        Color::Black
-                    } else {
-                        Color::Reset
-                    });
-                    if note.is_black_key() {
-                        paragraph.reversed()
-                    } else {
-                        paragraph
+                row.zip(keys_layout).for_each(|(key, key_layout)| {
+                    if let Some(key) = key {
+                        let note = self.note(&key).unwrap();
+                        let paragraph = Paragraph::new(vec![
+                            Line::from({
+                                let (s, f) = note.names();
+                                let octave = note.octave();
+                                f.map_or_else(
+                                    || format!("{s}{octave}"),
+                                    |f| format!("{s}{octave}/{f}{octave}"),
+                                )
+                            })
+                            .bold(),
+                            Line::from(format!("{n}", n = u8::from(note))),
+                            Line::from(format!("{f:.3} Hz", f = note.frequency())),
+                            Line::from(format!("<{key}>", key = key.to_uppercase()).blue()),
+                        ])
+                        .centered()
+                        .block(Block::bordered())
+                        .bg(if self.is_pressed(&key) {
+                            Color::Black
+                        } else {
+                            Color::Reset
+                        });
+                        if note.is_black_key() {
+                            paragraph.reversed()
+                        } else {
+                            paragraph
+                        }
+                        .render(key_layout, buf)
                     }
-                    .render(*key_layout, buf)
                 });
             });
     }
@@ -240,6 +243,7 @@ impl Default for KeyboardLayout {
                     Some('='),
                 ],
                 [
+                    None,
                     Some('q'),
                     Some('w'),
                     Some('e'),
@@ -252,9 +256,9 @@ impl Default for KeyboardLayout {
                     Some('p'),
                     None,
                     None,
-                    None,
                 ],
                 [
+                    None,
                     Some('a'),
                     Some('s'),
                     Some('d'),
@@ -267,10 +271,10 @@ impl Default for KeyboardLayout {
                     Some('ç'),
                     None,
                     None,
-                    None,
                 ],
                 [
                     // Some('\\'),
+                    None,
                     Some('z'),
                     Some('x'),
                     Some('c'),
@@ -283,7 +287,6 @@ impl Default for KeyboardLayout {
                     Some(';'),
                     None,
                     None,
-                    None,
                 ],
             ],
         }
@@ -292,13 +295,17 @@ impl Default for KeyboardLayout {
 
 impl KeyboardLayout {
     fn contains(&self, key: &char) -> bool {
-        self.rows().flatten().any(|candidate| &candidate == key)
+        self.rows()
+            .flatten()
+            .flatten()
+            .any(|candidate| &candidate == key)
     }
 
     fn find(&self, key: &char) -> Option<(usize, usize)> {
         self.rows()
             .enumerate()
             .flat_map(|(n, row)| row.enumerate().map(move |(k, candidate)| (n, k, candidate)))
+            .filter_map(|(n, k, candidate)| candidate.map(|candidate| (n, k, candidate)))
             .find_map(|(n, k, candidate)| (&candidate == key).then_some((n, k)))
     }
 
@@ -309,8 +316,8 @@ impl KeyboardLayout {
         )
     }
 
-    fn rows(&self) -> impl Iterator<Item = impl Iterator<Item = char>> {
-        self.rows.into_iter().map(|row| row.into_iter().flatten())
+    fn rows(&self) -> impl Iterator<Item = impl Iterator<Item = Option<char>>> {
+        self.rows.into_iter().map(|row| row.into_iter())
     }
 }
 
