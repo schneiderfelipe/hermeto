@@ -151,63 +151,53 @@ impl<const N: u8, const K: u8> Tonnetz<N, K> {
     fn release(&mut self, key: &char) -> bool {
         self.pressed.remove(key)
     }
+
+    fn is_pressed(&self, key: &char) -> bool {
+        self.pressed.contains(key)
+    }
 }
 
 impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let rows_layout =
-            Layout::vertical(Constraint::from_fills(vec![
-                1;
-                self.keyboard_layout.rows.len()
-            ]))
-            .split(area);
-        let longest_row_len = self
-            .keyboard_layout
-            .rows
-            .iter()
-            .map(|row| row.len())
-            .max()
-            .unwrap_or(0);
-        rows_layout
-            .iter()
-            .zip(&self.keyboard_layout.rows)
+        let (n_rows, max_n_keys) = self.keyboard_layout.size();
+        let rows_layout = Layout::vertical(Constraint::from_fills(vec![1; n_rows])).split(area);
+        self.keyboard_layout
+            .rows()
+            .zip(&*rows_layout)
             .enumerate()
-            .for_each(|(n, (row_layout, row))| {
+            .for_each(|(n, (row, row_layout))| {
                 let keys_layout = Layout::horizontal(Constraint::from_fills(
                     [n as u16]
                         .into_iter()
-                        .chain(vec![2; longest_row_len])
-                        .chain([(self.keyboard_layout.rows.len() - n - 1) as u16]),
+                        .chain(vec![2; max_n_keys])
+                        .chain([(n_rows - n - 1) as u16]),
                 ))
                 .split(*row_layout);
-                keys_layout[1..]
-                    .iter()
-                    .zip(row.iter().filter_map(|&key| key))
-                    .for_each(|(key_layout, key)| {
-                        let note = self.note(&key).unwrap();
-                        Paragraph::new(vec![
-                            Line::from({
-                                let (s, f) = note.names();
-                                let octave = note.octave();
-                                f.map_or_else(
-                                    || format!("{s}{octave}"),
-                                    |f| format!("{s}{octave}/{f}{octave}"),
-                                )
-                            })
-                            .bold(),
-                            Line::from(format!("{n}", n = u8::from(note))),
-                            Line::from(format!("{f:.3} Hz", f = note.frequency())),
-                            Line::from(format!("<{key}>", key = key.to_uppercase()).blue()),
-                        ])
-                        .centered()
-                        .block(Block::bordered())
-                        .bg(if self.pressed.contains(&key) {
-                            Color::Black
-                        } else {
-                            Color::Reset
+                row.zip(&keys_layout[1..]).for_each(|(key, key_layout)| {
+                    let note = self.note(&key).unwrap();
+                    Paragraph::new(vec![
+                        Line::from({
+                            let (s, f) = note.names();
+                            let octave = note.octave();
+                            f.map_or_else(
+                                || format!("{s}{octave}"),
+                                |f| format!("{s}{octave}/{f}{octave}"),
+                            )
                         })
-                        .render(*key_layout, buf)
-                    });
+                        .bold(),
+                        Line::from(format!("{n}", n = u8::from(note))),
+                        Line::from(format!("{f:.3} Hz", f = note.frequency())),
+                        Line::from(format!("<{key}>", key = key.to_uppercase()).blue()),
+                    ])
+                    .centered()
+                    .block(Block::bordered())
+                    .bg(if self.is_pressed(&key) {
+                        Color::Black
+                    } else {
+                        Color::Reset
+                    })
+                    .render(*key_layout, buf)
+                });
             });
     }
 }
@@ -289,21 +279,27 @@ impl Default for KeyboardLayout {
 
 impl KeyboardLayout {
     fn contains(&self, key: &char) -> bool {
-        self.rows.iter().any(|row| row.contains(&Some(*key)))
+        self.rows().flatten().any(|candidate| &candidate == key)
     }
 
     fn find(&self, key: &char) -> Option<(usize, usize)> {
+        self.rows()
+            .enumerate()
+            .flat_map(|(n, row)| row.enumerate().map(move |(k, candidate)| (n, k, candidate)))
+            .find_map(|(n, k, candidate)| (&candidate == key).then_some((n, k)))
+    }
+
+    fn size(&self) -> (usize, usize) {
+        (
+            self.rows.len(),
+            self.rows().map(|row| row.count()).max().unwrap_or(0),
+        )
+    }
+
+    fn rows(&self) -> impl Iterator<Item = impl Iterator<Item = char>> {
         self.rows
             .iter()
-            .enumerate()
-            .flat_map(|(n, row)| {
-                row.iter()
-                    .filter_map(|&key| key)
-                    .enumerate()
-                    .map(move |(k, candidate)| (n, k, candidate))
-            })
-            .find(|(_, _, candidate)| candidate == key)
-            .map(|(n, k, _)| (n, k))
+            .map(|row| row.iter().filter_map(|key| *key))
     }
 }
 
