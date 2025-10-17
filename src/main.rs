@@ -42,7 +42,7 @@ enum Message {
 #[derive(Debug, Default)]
 struct Application {
     is_running: bool,
-    tonnetz: Tonnetz,
+    tonnetz: Tonnetz<4, 7>,
 }
 
 impl Application {
@@ -117,19 +117,27 @@ impl Application {
 }
 
 #[derive(Debug)]
-struct Tonnetz {
+struct Tonnetz<const N: u8, const K: u8> {
+    base_note: Note,
     keyboard_layout: KeyboardLayout,
     pressed: HashSet<char>,
-    base_note: Note,
 }
 
-impl Tonnetz {
-    fn note(&self, key: &char) -> Option<Note> {
-        if let Some((n, k)) = self.keyboard_layout.get_position(key) {
-            Some(Note(u8::from(self.base_note) + n as u8 * 4 + k as u8 * 7))
-        } else {
-            None
+impl<const N: u8, const K: u8> Default for Tonnetz<N, K> {
+    fn default() -> Self {
+        Self {
+            base_note: Note(27),
+            keyboard_layout: Default::default(),
+            pressed: Default::default(),
         }
+    }
+}
+
+impl<const N: u8, const K: u8> Tonnetz<N, K> {
+    fn note(&self, key: &char) -> Option<Note> {
+        self.keyboard_layout
+            .find(key)
+            .map(|(n, k)| Note(n as u8 * N + k as u8 * K + u8::from(self.base_note)))
     }
 
     fn keyboard_layout(&self) -> KeyboardLayout {
@@ -145,17 +153,7 @@ impl Tonnetz {
     }
 }
 
-impl Default for Tonnetz {
-    fn default() -> Self {
-        Self {
-            keyboard_layout: Default::default(),
-            pressed: Default::default(),
-            base_note: Note(27),
-        }
-    }
-}
-
-impl Widget for &Tonnetz {
+impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let rows_layout =
             Layout::vertical(Constraint::from_fills(vec![
@@ -191,11 +189,10 @@ impl Widget for &Tonnetz {
                             Line::from({
                                 let (s, f) = note.names();
                                 let octave = note.octave();
-                                if let Some(f) = f {
-                                    format!("{s}{octave}/{f}{octave}")
-                                } else {
-                                    format!("{s}{octave}")
-                                }
+                                f.map_or_else(
+                                    || format!("{s}{octave}"),
+                                    |f| format!("{s}{octave}/{f}{octave}"),
+                                )
                             })
                             .bold(),
                             Line::from(format!("{n}", n = u8::from(note))),
@@ -222,70 +219,71 @@ struct KeyboardLayout {
 
 impl Default for KeyboardLayout {
     fn default() -> Self {
-        let rows = [
-            [
-                Some('\''),
-                Some('1'),
-                Some('2'),
-                Some('3'),
-                Some('4'),
-                Some('5'),
-                Some('6'),
-                Some('7'),
-                Some('8'),
-                Some('9'),
-                Some('0'),
-                Some('-'),
-                Some('='),
+        Self {
+            rows: [
+                [
+                    Some('\''),
+                    Some('1'),
+                    Some('2'),
+                    Some('3'),
+                    Some('4'),
+                    Some('5'),
+                    Some('6'),
+                    Some('7'),
+                    Some('8'),
+                    Some('9'),
+                    Some('0'),
+                    Some('-'),
+                    Some('='),
+                ],
+                [
+                    Some('q'),
+                    Some('w'),
+                    Some('e'),
+                    Some('r'),
+                    Some('t'),
+                    Some('y'),
+                    Some('u'),
+                    Some('i'),
+                    Some('o'),
+                    Some('p'),
+                    None,
+                    None,
+                    None,
+                ],
+                [
+                    Some('a'),
+                    Some('s'),
+                    Some('d'),
+                    Some('f'),
+                    Some('g'),
+                    Some('h'),
+                    Some('j'),
+                    Some('k'),
+                    Some('l'),
+                    Some('ç'),
+                    None,
+                    None,
+                    None,
+                ],
+                [
+                    // Some('\\'),
+                    Some('z'),
+                    Some('x'),
+                    Some('c'),
+                    Some('v'),
+                    Some('b'),
+                    Some('n'),
+                    Some('m'),
+                    Some(','),
+                    Some('.'),
+                    Some(';'),
+                    None,
+                    None,
+                    None,
+                ],
             ],
-            [
-                Some('q'),
-                Some('w'),
-                Some('e'),
-                Some('r'),
-                Some('t'),
-                Some('y'),
-                Some('u'),
-                Some('i'),
-                Some('o'),
-                Some('p'),
-                None,
-                None,
-                None,
-            ],
-            [
-                Some('a'),
-                Some('s'),
-                Some('d'),
-                Some('f'),
-                Some('g'),
-                Some('h'),
-                Some('j'),
-                Some('k'),
-                Some('l'),
-                Some('ç'),
-                None,
-                None,
-                None,
-            ],
-            [
-                // Some('\\'),
-                Some('z'),
-                Some('x'),
-                Some('c'),
-                Some('v'),
-                Some('b'),
-                Some('n'),
-                Some('m'),
-                Some(','),
-                Some('.'),
-                Some(';'),
-                None,
-                None,
-                None,
-            ],
-        ];
-        Self { rows }
+        }
     }
 }
 
@@ -294,7 +292,7 @@ impl KeyboardLayout {
         self.rows.iter().any(|row| row.contains(&Some(*key)))
     }
 
-    fn get_position(&self, key: &char) -> Option<(usize, usize)> {
+    fn find(&self, key: &char) -> Option<(usize, usize)> {
         self.rows
             .iter()
             .enumerate()
