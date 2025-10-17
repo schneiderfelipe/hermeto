@@ -32,17 +32,17 @@ fn main() -> Result<()> {
     result
 }
 
-#[derive(Debug, Default)]
-struct Application {
-    is_running: bool,
-    tonnetz: Tonnetz,
-}
-
 #[derive(Debug)]
 enum Message {
     Quit,
     Press(char),
     Release(char),
+}
+
+#[derive(Debug, Default)]
+struct Application {
+    is_running: bool,
+    tonnetz: Tonnetz,
 }
 
 impl Application {
@@ -113,44 +113,6 @@ impl Application {
             }
         }
         Ok(())
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-#[repr(transparent)]
-struct Note(u8);
-
-impl From<Note> for u8 {
-    fn from(note: Note) -> Self {
-        note.0
-    }
-}
-
-impl Note {
-    fn frequency(&self) -> f32 {
-        440.0 * 2_f32.powf((self.0 as f32 - 69.0) / 12.0)
-    }
-
-    fn names(&self) -> (&'static str, Option<&'static str>) {
-        match self.0 % 12 {
-            0 => ("C", None),
-            1 => ("C#", Some("Db")),
-            2 => ("D", None),
-            3 => ("D#", Some("Eb")),
-            4 => ("E", None),
-            5 => ("F", None),
-            6 => ("F#", Some("Gb")),
-            7 => ("G", None),
-            8 => ("G#", Some("Ab")),
-            9 => ("A", None),
-            10 => ("A#", Some("Bb")),
-            11 => ("B", None),
-            _ => unreachable!(),
-        }
-    }
-
-    fn octave(&self) -> i8 {
-        self.0 as i8 / 12 - 1
     }
 }
 
@@ -274,5 +236,43 @@ impl KeyboardLayout {
             }
         }
         None
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+#[repr(transparent)]
+struct Note(u8);
+
+impl From<Note> for u8 {
+    fn from(note: Note) -> Self {
+        note.0
+    }
+}
+
+impl Note {
+    fn frequency(&self) -> f32 {
+        440.0 * 2_f32.powf((self.0 as f32 - 69.0) / 12.0)
+    }
+
+    fn names(&self) -> (&'static str, Option<&'static str>) {
+        match self.0 % 12 {
+            0 => ("C", None),
+            1 => ("C#", Some("Db")),
+            2 => ("D", None),
+            3 => ("D#", Some("Eb")),
+            4 => ("E", None),
+            5 => ("F", None),
+            6 => ("F#", Some("Gb")),
+            7 => ("G", None),
+            8 => ("G#", Some("Ab")),
+            9 => ("A", None),
+            10 => ("A#", Some("Bb")),
+            11 => ("B", None),
+            _ => unreachable!(),
+        }
+    }
+
+    fn octave(&self) -> i8 {
+        self.0 as i8 / 12 - 1
     }
 }
