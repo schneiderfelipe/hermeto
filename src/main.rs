@@ -49,7 +49,7 @@ impl Application {
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         self.is_running = true;
         let (message_tx, message_rx) = mpsc::channel();
-        let keyboard_layout = self.tonnetz.keyboard_layout.clone();
+        let keyboard_layout = self.tonnetz.keyboard_layout();
         thread::spawn(move || -> Result<()> {
             loop {
                 match event::read()? {
@@ -104,11 +104,11 @@ impl Application {
             match message_rx.recv()? {
                 Message::Quit => self.is_running = false,
                 Message::Press(key) => {
-                    self.tonnetz.pressed.insert(key);
+                    self.tonnetz.press(key);
                     frequency_tx.send(self.tonnetz.note(&key).unwrap().frequency())?;
                 }
                 Message::Release(key) => {
-                    self.tonnetz.pressed.remove(&key);
+                    self.tonnetz.release(&key);
                 }
             }
         }
@@ -130,6 +130,18 @@ impl Tonnetz {
         } else {
             None
         }
+    }
+
+    fn keyboard_layout(&self) -> KeyboardLayout {
+        self.keyboard_layout
+    }
+
+    fn press(&mut self, key: char) -> bool {
+        self.pressed.insert(key)
+    }
+
+    fn release(&mut self, key: &char) -> bool {
+        self.pressed.remove(key)
     }
 }
 
@@ -158,60 +170,120 @@ impl Widget for &Tonnetz {
             .map(|row| row.len())
             .max()
             .unwrap_or(0);
-        for (n, (row_layout, row)) in rows_layout
+        rows_layout
             .iter()
             .zip(&self.keyboard_layout.rows)
             .enumerate()
-        {
-            let keys_layout = Layout::horizontal(Constraint::from_fills(
-                [n as u16]
-                    .into_iter()
-                    .chain(vec![2; longest_row_len])
-                    .chain([(self.keyboard_layout.rows.len() - n - 1) as u16]),
-            ))
-            .split(*row_layout);
-            for (key_layout, key) in keys_layout[1..].iter().zip(row) {
-                let note = self.note(key).unwrap();
-                Paragraph::new(vec![
-                    Line::from({
-                        let (s, f) = note.names();
-                        let octave = note.octave();
-                        if let Some(f) = f {
-                            format!("{s}{octave}/{f}{octave}")
+            .for_each(|(n, (row_layout, row))| {
+                let keys_layout = Layout::horizontal(Constraint::from_fills(
+                    [n as u16]
+                        .into_iter()
+                        .chain(vec![2; longest_row_len])
+                        .chain([(self.keyboard_layout.rows.len() - n - 1) as u16]),
+                ))
+                .split(*row_layout);
+                keys_layout[1..]
+                    .iter()
+                    .zip(row.iter().filter_map(|&key| key))
+                    .for_each(|(key_layout, key)| {
+                        let note = self.note(&key).unwrap();
+                        Paragraph::new(vec![
+                            Line::from({
+                                let (s, f) = note.names();
+                                let octave = note.octave();
+                                if let Some(f) = f {
+                                    format!("{s}{octave}/{f}{octave}")
+                                } else {
+                                    format!("{s}{octave}")
+                                }
+                            })
+                            .bold(),
+                            Line::from(format!("{n}", n = u8::from(note))),
+                            Line::from(format!("{f:.3} Hz", f = note.frequency())),
+                            Line::from(format!("<{key}>", key = key.to_uppercase()).blue()),
+                        ])
+                        .centered()
+                        .block(Block::bordered())
+                        .bg(if self.pressed.contains(&key) {
+                            Color::Black
                         } else {
-                            format!("{s}{octave}")
-                        }
-                    })
-                    .bold(),
-                    Line::from(format!("{n}", n = u8::from(note))),
-                    Line::from(format!("{f:.3} Hz", f = note.frequency())),
-                    Line::from(format!("<{key}>", key = key.to_uppercase()).blue()),
-                ])
-                .centered()
-                .block(Block::bordered())
-                .bg(if self.pressed.contains(key) {
-                    Color::Black
-                } else {
-                    Color::Reset
-                })
-                .render(*key_layout, buf)
-            }
-        }
+                            Color::Reset
+                        })
+                        .render(*key_layout, buf)
+                    });
+            });
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 struct KeyboardLayout {
-    rows: Vec<Vec<char>>,
+    rows: [[Option<char>; 13]; 4],
 }
 
 impl Default for KeyboardLayout {
     fn default() -> Self {
-        let rows = vec![
-            vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
-            vec!['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
-            vec!['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'ç'],
-            vec!['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', ';'],
+        let rows = [
+            [
+                Some('\''),
+                Some('1'),
+                Some('2'),
+                Some('3'),
+                Some('4'),
+                Some('5'),
+                Some('6'),
+                Some('7'),
+                Some('8'),
+                Some('9'),
+                Some('0'),
+                Some('-'),
+                Some('='),
+            ],
+            [
+                Some('q'),
+                Some('w'),
+                Some('e'),
+                Some('r'),
+                Some('t'),
+                Some('y'),
+                Some('u'),
+                Some('i'),
+                Some('o'),
+                Some('p'),
+                None,
+                None,
+                None,
+            ],
+            [
+                Some('a'),
+                Some('s'),
+                Some('d'),
+                Some('f'),
+                Some('g'),
+                Some('h'),
+                Some('j'),
+                Some('k'),
+                Some('l'),
+                Some('ç'),
+                None,
+                None,
+                None,
+            ],
+            [
+                // Some('\\'),
+                Some('z'),
+                Some('x'),
+                Some('c'),
+                Some('v'),
+                Some('b'),
+                Some('n'),
+                Some('m'),
+                Some(','),
+                Some('.'),
+                Some(';'),
+                None,
+                None,
+                None,
+            ],
         ];
         Self { rows }
     }
@@ -219,23 +291,21 @@ impl Default for KeyboardLayout {
 
 impl KeyboardLayout {
     fn contains(&self, key: &char) -> bool {
-        for row in &self.rows {
-            if row.contains(key) {
-                return true;
-            }
-        }
-        false
+        self.rows.iter().any(|row| row.contains(&Some(*key)))
     }
 
     fn get_position(&self, key: &char) -> Option<(usize, usize)> {
-        for (n, row) in self.rows.iter().enumerate() {
-            for (k, candidate) in row.iter().enumerate() {
-                if candidate == key {
-                    return Some((n, k));
-                }
-            }
-        }
-        None
+        self.rows
+            .iter()
+            .enumerate()
+            .flat_map(|(n, row)| {
+                row.iter()
+                    .filter_map(|&key| key)
+                    .enumerate()
+                    .map(move |(k, candidate)| (n, k, candidate))
+            })
+            .find(|(_, _, candidate)| candidate == key)
+            .map(|(n, k, _)| (n, k))
     }
 }
 
