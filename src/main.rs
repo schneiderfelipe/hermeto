@@ -11,7 +11,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Stylize},
     text::Line,
-    widgets::{Paragraph, Widget},
+    widgets::{Block, Paragraph, Widget},
 };
 use rodio::{
     OutputStreamBuilder, Source,
@@ -90,7 +90,7 @@ impl Application {
                     SignalGenerator::new(
                         stream_handle.config().sample_rate(),
                         frequency,
-                        Function::Sine,
+                        Function::Triangle,
                     )
                     .amplify_normalized(0.2)
                     .take_duration(Duration::from_millis(1000)),
@@ -105,12 +105,7 @@ impl Application {
                 Message::Quit => self.is_running = false,
                 Message::Press(key) => {
                     self.tonnetz.pressed.insert(key);
-                    frequency_tx.send(
-                        440.0
-                            * 2_f32.powf(
-                                (self.tonnetz.note_number(&key).unwrap() as f32 - 69.0) / 12.0,
-                            ),
-                    )?;
+                    frequency_tx.send(self.tonnetz.note(&key).unwrap().frequency())?;
                 }
                 Message::Release(key) => {
                     self.tonnetz.pressed.remove(&key);
@@ -121,17 +116,55 @@ impl Application {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(transparent)]
+struct Note(u8);
+
+impl From<Note> for u8 {
+    fn from(note: Note) -> Self {
+        note.0
+    }
+}
+
+impl Note {
+    fn frequency(&self) -> f32 {
+        440.0 * 2_f32.powf((self.0 as f32 - 69.0) / 12.0)
+    }
+
+    fn names(&self) -> (&'static str, Option<&'static str>) {
+        match self.0 % 12 {
+            0 => ("C", None),
+            1 => ("C#", Some("Db")),
+            2 => ("D", None),
+            3 => ("D#", Some("Eb")),
+            4 => ("E", None),
+            5 => ("F", None),
+            6 => ("F#", Some("Gb")),
+            7 => ("G", None),
+            8 => ("G#", Some("Ab")),
+            9 => ("A", None),
+            10 => ("A#", Some("Bb")),
+            11 => ("B", None),
+            _ => unreachable!(),
+        }
+    }
+
+    fn octave(&self) -> i8 {
+        self.0 as i8 / 12 - 1
+    }
+}
+
 #[derive(Debug)]
 struct Tonnetz {
     keyboard_layout: KeyboardLayout,
     pressed: HashSet<char>,
-    base_note: u8,
+    base_note: Note,
 }
 
 impl Tonnetz {
-    fn note_number(&self, key: &char) -> Option<u8> {
+    fn note(&self, key: &char) -> Option<Note> {
         if let Some((n, k)) = self.keyboard_layout.get_position(key) {
-            Some(self.base_note + n as u8 * 4 + k as u8 * 7)
+            Some(Note(u8::from(self.base_note) + n as u8 * 4 + k as u8 * 7))
         } else {
             None
         }
@@ -143,7 +176,7 @@ impl Default for Tonnetz {
         Self {
             keyboard_layout: Default::default(),
             pressed: Default::default(),
-            base_note: 27,
+            base_note: Note(27),
         }
     }
 }
@@ -176,34 +209,29 @@ impl Widget for &Tonnetz {
             ))
             .split(*row_layout);
             for (key_layout, key) in keys_layout[1..].iter().zip(row) {
-                let note_number = self.note_number(key).unwrap();
-                let note = match note_number % 12 {
-                    0 => "C",
-                    1 => "C#/Db",
-                    2 => "D",
-                    3 => "D#/Eb",
-                    4 => "E",
-                    5 => "F",
-                    6 => "F#/Gb",
-                    7 => "G",
-                    8 => "G#/Ab",
-                    9 => "A",
-                    10 => "A#/Bb",
-                    11 => "B",
-                    _ => unreachable!(),
-                };
+                let note = self.note(key).unwrap();
                 Paragraph::new(vec![
-                    Line::from(note).bold(),
-                    Line::from(format!("{note_number}")),
-                    Line::from(format!("<{key}>", key = key.to_uppercase()).fg(
-                        if self.pressed.contains(key) {
-                            Color::Yellow
+                    Line::from({
+                        let (s, f) = note.names();
+                        let octave = note.octave();
+                        if let Some(f) = f {
+                            format!("{s}{octave}/{f}{octave}")
                         } else {
-                            Color::Blue
-                        },
-                    )),
+                            format!("{s}{octave}")
+                        }
+                    })
+                    .bold(),
+                    Line::from(format!("{n}", n = u8::from(note))),
+                    Line::from(format!("{f:.3} Hz", f = note.frequency())),
+                    Line::from(format!("<{key}>", key = key.to_uppercase()).blue()),
                 ])
                 .centered()
+                .block(Block::bordered())
+                .bg(if self.pressed.contains(key) {
+                    Color::Black
+                } else {
+                    Color::Reset
+                })
                 .render(*key_layout, buf)
             }
         }
