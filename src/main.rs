@@ -1,4 +1,4 @@
-use color_eyre::Result;
+use color_eyre::{Result, owo_colors::OwoColorize};
 use crossterm::{
     event::{
         self, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -17,7 +17,7 @@ use rodio::{
     OutputStreamBuilder, Source,
     source::{Function, SignalGenerator},
 };
-use std::{collections::HashSet, sync::mpsc, thread, time::Duration};
+use std::{collections::HashSet, rc::Rc, sync::mpsc, thread, time::Duration};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -157,25 +157,33 @@ impl<const N: u8, const K: u8> Tonnetz<N, K> {
     }
 }
 
+fn split_diamonds_layout(n_rows: usize, n_cols: usize, area: Rect) -> Vec<Rc<[Rect]>> {
+    Layout::vertical(Constraint::from_fills(vec![1; n_rows]))
+        .split(area)
+        .iter()
+        .enumerate()
+        .map(move |(n, row_layout)| {
+            Layout::horizontal(Constraint::from_fills(
+                [n as u16]
+                    .into_iter()
+                    .chain(vec![2; n_cols])
+                    .chain([(n_rows - n - 1) as u16]),
+            ))
+            .split(*row_layout)
+        })
+        .collect()
+}
+
 impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let (n_rows, max_n_keys) = self.keyboard_layout.size();
-        let rows_layout = Layout::vertical(Constraint::from_fills(vec![1; n_rows])).split(area);
         self.keyboard_layout
             .rows()
-            .zip(&*rows_layout)
-            .enumerate()
-            .for_each(|(n, (row, row_layout))| {
-                let keys_layout = Layout::horizontal(Constraint::from_fills(
-                    [n as u16]
-                        .into_iter()
-                        .chain(vec![2; max_n_keys])
-                        .chain([(n_rows - n - 1) as u16]),
-                ))
-                .split(*row_layout);
+            .zip(split_diamonds_layout(n_rows, max_n_keys, area))
+            .for_each(|(row, keys_layout)| {
                 row.zip(&keys_layout[1..]).for_each(|(key, key_layout)| {
                     let note = self.note(&key).unwrap();
-                    Paragraph::new(vec![
+                    let paragraph = Paragraph::new(vec![
                         Line::from({
                             let (s, f) = note.names();
                             let octave = note.octave();
@@ -195,7 +203,12 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
                         Color::Black
                     } else {
                         Color::Reset
-                    })
+                    });
+                    if note.is_black_key() {
+                        paragraph.reversed()
+                    } else {
+                        paragraph
+                    }
                     .render(*key_layout, buf)
                 });
             });
@@ -297,9 +310,7 @@ impl KeyboardLayout {
     }
 
     fn rows(&self) -> impl Iterator<Item = impl Iterator<Item = char>> {
-        self.rows
-            .iter()
-            .map(|row| row.iter().filter_map(|key| *key))
+        self.rows.into_iter().map(|row| row.into_iter().flatten())
     }
 }
 
@@ -332,6 +343,14 @@ impl Note {
             9 => ("A", None),
             10 => ("A#", Some("Bb")),
             11 => ("B", None),
+            _ => unreachable!(),
+        }
+    }
+
+    fn is_black_key(&self) -> bool {
+        match self.0 % 12 {
+            0 | 2 | 4 | 5 | 7 | 9 | 11 => false,
+            1 | 3 | 6 | 8 | 10 => true,
             _ => unreachable!(),
         }
     }
