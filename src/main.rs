@@ -1,4 +1,5 @@
 use color_eyre::Result;
+use core::{iter::repeat_n, time::Duration};
 use crossterm::{
     event::{
         self, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -17,7 +18,7 @@ use rodio::{
     OutputStreamBuilder, Source,
     source::{Function, SignalGenerator},
 };
-use std::{collections::HashSet, sync::mpsc, thread, time::Duration};
+use std::{collections::HashSet, sync::mpsc, thread};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -158,16 +159,17 @@ impl<const N: u8, const K: u8> Tonnetz<N, K> {
 }
 
 fn split_diamonds_layout(n_rows: usize, n_cols: usize, area: Rect) -> Vec<Vec<Rect>> {
-    Layout::vertical(Constraint::from_fills(vec![1; n_rows]))
+    Layout::vertical(Constraint::from_fills(repeat_n(1, n_rows)))
         .split(area)
         .iter()
         .enumerate()
         .map(|(n, row_layout)| {
+            let n = n as u16;
             Layout::horizontal(Constraint::from_fills(
-                [n as u16]
+                [n % 2]
                     .into_iter()
-                    .chain(vec![2; n_cols])
-                    .chain([(n_rows - n - 1) as u16]),
+                    .chain(repeat_n(2, n_cols))
+                    .chain([2 - (n % 2)]),
             ))
             .split(*row_layout)[1..]
                 .into()
@@ -259,6 +261,7 @@ impl Default for KeyboardLayout {
                 ],
                 [
                     None,
+                    None,
                     Some('a'),
                     Some('s'),
                     Some('d'),
@@ -270,11 +273,10 @@ impl Default for KeyboardLayout {
                     Some('l'),
                     Some('ç'),
                     None,
-                    None,
                 ],
                 [
-                    // Some('\\'),
                     None,
+                    Some('\\'),
                     Some('z'),
                     Some('x'),
                     Some('c'),
@@ -285,7 +287,6 @@ impl Default for KeyboardLayout {
                     Some(','),
                     Some('.'),
                     Some(';'),
-                    None,
                     None,
                 ],
             ],
