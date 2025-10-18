@@ -138,6 +138,7 @@ impl<const N: u8, const K: u8> Tonnetz<N, K> {
     fn note(&self, key: &char) -> Option<Note> {
         self.keyboard_layout
             .find(key)
+            .map(|(n, k)| (n, k - n / 2))
             .map(|(n, k)| Note(n as u8 * N + k as u8 * K + u8::from(self.base_note)))
     }
 
@@ -158,33 +159,25 @@ impl<const N: u8, const K: u8> Tonnetz<N, K> {
     }
 }
 
-fn split_diamonds_layout(n_rows: usize, n_cols: usize, area: Rect) -> Vec<Vec<Rect>> {
-    Layout::vertical(Constraint::from_fills(repeat_n(1, n_rows)))
-        .split(area)
-        .iter()
-        .enumerate()
-        .map(|(n, row_layout)| {
+impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let (n_rows, max_n_keys) = self.keyboard_layout.size();
+        let l = Layout::vertical(Constraint::from_fills(repeat_n(1, n_rows))).split(area);
+        let split_diamonds_layout = l.iter().enumerate().map(|(n, row_layout)| {
             let n = n as u16;
             Layout::horizontal(Constraint::from_fills(
                 [n % 2]
                     .into_iter()
-                    .chain(repeat_n(2, n_cols))
+                    .chain(repeat_n(2, max_n_keys))
                     .chain([2 - (n % 2)]),
             ))
-            .split(*row_layout)[1..]
-                .into()
-        })
-        .collect()
-}
-
-impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let (n_rows, max_n_keys) = self.keyboard_layout.size();
+            .split(*row_layout)
+        });
         self.keyboard_layout
             .rows()
-            .zip(split_diamonds_layout(n_rows, max_n_keys, area))
+            .zip(split_diamonds_layout)
             .for_each(|(row, keys_layout)| {
-                row.zip(keys_layout).for_each(|(key, key_layout)| {
+                row.zip(&keys_layout[1..]).for_each(|(key, key_layout)| {
                     if let Some(key) = key {
                         let note = self.note(&key).unwrap();
                         let paragraph = Paragraph::new(vec![
@@ -213,7 +206,7 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
                         } else {
                             paragraph
                         }
-                        .render(key_layout, buf)
+                        .render(*key_layout, buf)
                     }
                 });
             });
