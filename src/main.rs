@@ -12,7 +12,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Stylize},
     text::Line,
-    widgets::{Block, Paragraph, Widget},
+    widgets::{Block, BorderType, Paragraph, Widget},
 };
 use rodio::{
     OutputStreamBuilder, Source,
@@ -136,10 +136,10 @@ impl<const N: u8, const K: u8> Default for Tonnetz<N, K> {
 
 impl<const N: u8, const K: u8> Tonnetz<N, K> {
     fn note(&self, key: &char) -> Option<Note> {
-        self.keyboard_layout
-            .find(key)
-            .map(|(n, k)| (n, k - n / 2))
-            .map(|(n, k)| Note(n as u8 * N + k as u8 * K + u8::from(self.base_note)))
+        self.keyboard_layout.find(key).map(|(n, k)| {
+            let k = k - n / 2; // adjust for the tilt
+            Note(u8::from(self.base_note) + N * n as u8 + K * k as u8)
+        })
     }
 
     fn keyboard_layout(&self) -> KeyboardLayout {
@@ -162,25 +162,25 @@ impl<const N: u8, const K: u8> Tonnetz<N, K> {
 impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let (n_rows, max_n_keys) = self.keyboard_layout.size();
-        let l = Layout::vertical(Constraint::from_fills(repeat_n(1, n_rows))).split(area);
-        let split_diamonds_layout = l.iter().enumerate().map(|(n, row_layout)| {
-            let n = n as u16;
+        let rows_layout = Layout::vertical(Constraint::from_fills(repeat_n(1, n_rows))).split(area);
+        let tilted_rows_layout = rows_layout.iter().enumerate().map(move |(n, row_layout)| {
+            let parity = (n % 2) as u16;
             Layout::horizontal(Constraint::from_fills(
-                [n % 2]
+                [parity]
                     .into_iter()
                     .chain(repeat_n(2, max_n_keys))
-                    .chain([2 - (n % 2)]),
+                    .chain([2 - parity]),
             ))
             .split(*row_layout)
         });
         self.keyboard_layout
             .rows()
-            .zip(split_diamonds_layout)
+            .zip(tilted_rows_layout)
             .for_each(|(row, keys_layout)| {
                 row.zip(&keys_layout[1..]).for_each(|(key, key_layout)| {
                     if let Some(key) = key {
                         let note = self.note(&key).unwrap();
-                        let paragraph = Paragraph::new(vec![
+                        Paragraph::new(vec![
                             Line::from({
                                 let (s, f) = note.names();
                                 let octave = note.octave();
@@ -190,22 +190,21 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
                                 )
                             })
                             .bold(),
-                            Line::from(format!("{n}", n = u8::from(note))),
-                            Line::from(format!("{f:.3} Hz", f = note.frequency())),
-                            Line::from(format!("<{key}>", key = key.to_uppercase()).blue()),
+                            Line::from(format!("{}", u8::from(note))),
+                            Line::from(format!("{:.3} Hz", note.frequency())),
+                            Line::from(format!("<{}>", key.to_uppercase()).blue()),
                         ])
                         .centered()
-                        .block(Block::bordered())
+                        .block(if note.is_black_key() {
+                            Block::bordered()
+                        } else {
+                            Block::bordered().border_type(BorderType::Thick)
+                        })
                         .bg(if self.is_pressed(&key) {
                             Color::Black
                         } else {
                             Color::Reset
-                        });
-                        if note.is_black_key() {
-                            paragraph.reversed()
-                        } else {
-                            paragraph
-                        }
+                        })
                         .render(*key_layout, buf)
                     }
                 });
