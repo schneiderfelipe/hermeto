@@ -1,5 +1,8 @@
 use color_eyre::Result;
-use core::{iter::repeat_n, time::Duration};
+use core::{
+    iter::{once, repeat_n},
+    time::Duration,
+};
 use crossterm::{
     event::{
         self, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -164,50 +167,52 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
         let (n_rows, max_n_keys) = self.keyboard_layout.size();
         let rows_layout = Layout::vertical(Constraint::from_fills(repeat_n(1, n_rows))).split(area);
         let tilted_rows_layout = rows_layout.iter().enumerate().map(move |(n, row_layout)| {
-            let parity = (n % 2) as u16;
-            Layout::horizontal(Constraint::from_fills(
-                [parity]
-                    .into_iter()
-                    .chain(repeat_n(2, max_n_keys))
-                    .chain([2 - parity]),
-            ))
+            Layout::horizontal(match n % 2 {
+                0 => Constraint::from_fills(repeat_n(2, max_n_keys).chain(once(1))),
+                1 => Constraint::from_fills(once(1).chain(repeat_n(2, max_n_keys))),
+                _ => unreachable!(),
+            })
             .split(*row_layout)
         });
         self.keyboard_layout
             .rows()
+            .into_iter()
             .zip(tilted_rows_layout)
-            .for_each(|(row, keys_layout)| {
-                row.zip(&keys_layout[1..]).for_each(|(key, key_layout)| {
-                    if let Some(key) = key {
-                        let note = self.note(&key).unwrap();
-                        Paragraph::new(vec![
-                            Line::from({
-                                let (s, f) = note.names();
-                                let octave = note.octave();
-                                f.map_or_else(
-                                    || format!("{s}{octave}"),
-                                    |f| format!("{s}{octave}/{f}{octave}"),
-                                )
+            .enumerate()
+            .for_each(|(n, (row, keys_layout))| {
+                row.into_iter()
+                    .zip(keys_layout.iter().skip(n % 2))
+                    .for_each(|(key, key_layout)| {
+                        if let Some(key) = key {
+                            let note = self.note(&key).unwrap();
+                            Paragraph::new(vec![
+                                Line::from({
+                                    let (s, f) = note.names();
+                                    let octave = note.octave();
+                                    f.map_or_else(
+                                        || format!("{s}{octave}"),
+                                        |f| format!("{s}{octave}/{f}{octave}"),
+                                    )
+                                })
+                                .bold(),
+                                Line::from(format!("{}", u8::from(note))),
+                                Line::from(format!("{:.3} Hz", note.frequency())),
+                                Line::from(format!("<{}>", key.to_uppercase()).blue()),
+                            ])
+                            .centered()
+                            .block(if note.is_black_key() {
+                                Block::bordered()
+                            } else {
+                                Block::bordered().border_type(BorderType::Thick)
                             })
-                            .bold(),
-                            Line::from(format!("{}", u8::from(note))),
-                            Line::from(format!("{:.3} Hz", note.frequency())),
-                            Line::from(format!("<{}>", key.to_uppercase()).blue()),
-                        ])
-                        .centered()
-                        .block(if note.is_black_key() {
-                            Block::bordered()
-                        } else {
-                            Block::bordered().border_type(BorderType::Thick)
-                        })
-                        .bg(if self.is_pressed(&key) {
-                            Color::Black
-                        } else {
-                            Color::Reset
-                        })
-                        .render(*key_layout, buf)
-                    }
-                });
+                            .bg(if self.is_pressed(&key) {
+                                Color::Black
+                            } else {
+                                Color::Reset
+                            })
+                            .render(*key_layout, buf)
+                        }
+                    });
             });
     }
 }
@@ -289,28 +294,38 @@ impl Default for KeyboardLayout {
 impl KeyboardLayout {
     fn contains(&self, key: &char) -> bool {
         self.rows()
+            .into_iter()
             .flatten()
             .flatten()
-            .any(|candidate| &candidate == key)
+            .any(|candidate| candidate == *key)
     }
 
     fn find(&self, key: &char) -> Option<(usize, usize)> {
         self.rows()
+            .into_iter()
             .enumerate()
-            .flat_map(|(n, row)| row.enumerate().map(move |(k, candidate)| (n, k, candidate)))
+            .flat_map(|(n, row)| {
+                row.into_iter()
+                    .enumerate()
+                    .map(move |(k, candidate)| (n, k, candidate))
+            })
             .filter_map(|(n, k, candidate)| candidate.map(|candidate| (n, k, candidate)))
-            .find_map(|(n, k, candidate)| (&candidate == key).then_some((n, k)))
+            .find_map(|(n, k, candidate)| (candidate == *key).then_some((n, k)))
     }
 
     fn size(&self) -> (usize, usize) {
         (
             self.rows.len(),
-            self.rows().map(|row| row.count()).max().unwrap_or(0),
+            self.rows()
+                .into_iter()
+                .map(|row| row.len())
+                .max()
+                .unwrap_or(0),
         )
     }
 
-    fn rows(&self) -> impl Iterator<Item = impl Iterator<Item = Option<char>>> {
-        self.rows.into_iter().map(|row| row.into_iter())
+    fn rows(&self) -> [[Option<char>; 13]; 4] {
+        self.rows
     }
 }
 
