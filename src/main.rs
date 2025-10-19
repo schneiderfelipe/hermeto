@@ -9,6 +9,7 @@ use crossterm::{
     },
     execute,
 };
+use either::Either;
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
@@ -109,7 +110,10 @@ impl Application {
                 Message::Quit => self.is_running = false,
                 Message::Press(key) => {
                     self.tonnetz.press(key);
-                    frequency_tx.send(self.tonnetz.note(&key).unwrap().frequency())?;
+                    self.tonnetz
+                        .note(&key)
+                        .iter()
+                        .try_for_each(|note| frequency_tx.send(note.frequency()))?;
                 }
                 Message::Release(key) => {
                     self.tonnetz.release(&key);
@@ -166,14 +170,34 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let (n_rows, max_n_keys) = self.keyboard_layout.size();
         let rows_layout = Layout::vertical(Constraint::from_fills(repeat_n(1, n_rows))).split(area);
-        let tilted_rows_layout = rows_layout.iter().enumerate().map(move |(n, row_layout)| {
-            Layout::horizontal(match n % 2 {
-                0 => Constraint::from_fills(repeat_n(2, max_n_keys).chain(once(1))),
-                1 => Constraint::from_fills(once(1).chain(repeat_n(2, max_n_keys))),
-                _ => unreachable!(),
-            })
-            .split(*row_layout)
-        });
+        let tilted_rows_layout = if self
+            .keyboard_layout
+            .rows()
+            .into_iter()
+            .enumerate()
+            .filter(|(n, _)| n % 2 == 1)
+            .all(|(_, row_layout)| row_layout.into_iter().last().unwrap().is_none())
+        {
+            Either::Left(rows_layout.iter().enumerate().map(move |(n, row_layout)| {
+                Layout::horizontal(match n % 2 {
+                    0 => Constraint::from_fills(repeat_n(2, max_n_keys)),
+                    1 => Constraint::from_fills(
+                        once(1).chain(repeat_n(2, max_n_keys - 1)).chain(once(1)),
+                    ),
+                    _ => unreachable!(),
+                })
+                .split(*row_layout)
+            }))
+        } else {
+            Either::Right(rows_layout.iter().enumerate().map(move |(n, row_layout)| {
+                Layout::horizontal(match n % 2 {
+                    0 => Constraint::from_fills(repeat_n(2, max_n_keys).chain(once(1))),
+                    1 => Constraint::from_fills(once(1).chain(repeat_n(2, max_n_keys))),
+                    _ => unreachable!(),
+                })
+                .split(*row_layout)
+            }))
+        };
         self.keyboard_layout
             .rows()
             .into_iter()
@@ -182,36 +206,36 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
             .for_each(|(n, (row, keys_layout))| {
                 row.into_iter()
                     .zip(keys_layout.iter().skip(n % 2))
-                    .for_each(|(key, key_layout)| {
-                        if let Some(key) = key {
-                            let note = self.note(&key).unwrap();
-                            Paragraph::new(vec![
-                                Line::from({
-                                    let (s, f) = note.names();
-                                    let octave = note.octave();
-                                    f.map_or_else(
-                                        || format!("{s}{octave}"),
-                                        |f| format!("{s}{octave}/{f}{octave}"),
-                                    )
-                                })
-                                .bold(),
-                                Line::from(format!("{}", u8::from(note))),
-                                Line::from(format!("{:.3} Hz", note.frequency())),
-                                Line::from(format!("<{}>", key.to_uppercase()).blue()),
-                            ])
-                            .centered()
-                            .block(if note.is_black_key() {
-                                Block::bordered()
-                            } else {
-                                Block::bordered().border_type(BorderType::Thick)
+                    .filter_map(|(key, key_layout)| {
+                        key.and_then(|key| self.note(&key).map(|note| (note, key, key_layout)))
+                    })
+                    .for_each(|(note, key, key_layout)| {
+                        Paragraph::new(vec![
+                            Line::from({
+                                let (s, f) = note.names();
+                                let octave = note.octave();
+                                f.map_or_else(
+                                    || format!("{s}{octave}"),
+                                    |f| format!("{s}{octave}/{f}{octave}"),
+                                )
                             })
-                            .bg(if self.is_pressed(&key) {
-                                Color::Black
-                            } else {
-                                Color::Reset
-                            })
-                            .render(*key_layout, buf)
-                        }
+                            .bold(),
+                            Line::from(format!("{}", u8::from(note))),
+                            Line::from(format!("{:.3} Hz", note.frequency())),
+                            Line::from(format!("<{}>", key.to_uppercase()).blue()),
+                        ])
+                        .centered()
+                        .block(if note.is_black_key() {
+                            Block::bordered()
+                        } else {
+                            Block::bordered().border_type(BorderType::Thick)
+                        })
+                        .bg(if self.is_pressed(&key) {
+                            Color::Black
+                        } else {
+                            Color::Reset
+                        })
+                        .render(*key_layout, buf)
                     });
             });
     }
