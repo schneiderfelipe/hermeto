@@ -80,7 +80,7 @@ impl<'a> Application<'a> {
                         modifiers,
                         kind: event::KeyEventKind::Press,
                         state,
-                    }) if keyboard_layout.contains(&key) => {
+                    }) if keyboard_layout.contains(key) => {
                         message_tx.send(Message::Press(key))?;
                     }
                     event::Event::Key(event::KeyEvent {
@@ -88,7 +88,7 @@ impl<'a> Application<'a> {
                         modifiers,
                         kind: event::KeyEventKind::Release,
                         state,
-                    }) if keyboard_layout.contains(&key) => {
+                    }) if keyboard_layout.contains(key) => {
                         message_tx.send(Message::Release(key))?;
                     }
                     _ => (),
@@ -120,12 +120,12 @@ impl<'a> Application<'a> {
                 Message::Press(key) => {
                     self.tonnetz.press(key);
                     self.tonnetz
-                        .note(&key)
+                        .note(key)
                         .iter()
                         .try_for_each(|note| frequency_tx.send(note.frequency()))?;
                 }
                 Message::Release(key) => {
-                    self.tonnetz.release(&key);
+                    self.tonnetz.release(key);
                 }
             }
         }
@@ -142,7 +142,7 @@ struct Tonnetz<'a, const N: u8, const K: u8> {
     style: Style,
 }
 
-impl<'a, const N: u8, const K: u8> Tonnetz<'a, N, K> {
+impl<const N: u8, const K: u8> Tonnetz<'_, N, K> {
     fn new(base_note: Note) -> Self {
         Self {
             base_note,
@@ -153,10 +153,14 @@ impl<'a, const N: u8, const K: u8> Tonnetz<'a, N, K> {
         }
     }
 
-    fn note(&self, key: &char) -> Option<Note> {
+    fn note(&self, key: char) -> Option<Note> {
         self.keyboard_layout.find(key).map(|(n, k)| {
             let k = k - n / 2; // adjust for the tilt
-            Note(u8::from(self.base_note) + N * n as u8 + K * k as u8)
+            Note(
+                u8::from(self.base_note)
+                    + N * u8::try_from(n).unwrap()
+                    + K * u8::try_from(k).unwrap(),
+            )
         })
     }
 
@@ -168,16 +172,16 @@ impl<'a, const N: u8, const K: u8> Tonnetz<'a, N, K> {
         self.pressed.insert(key)
     }
 
-    fn release(&mut self, key: &char) -> bool {
-        self.pressed.remove(key)
+    fn release(&mut self, key: char) -> bool {
+        self.pressed.remove(&key)
     }
 
-    fn is_pressed(&self, key: &char) -> bool {
-        self.pressed.contains(key)
+    fn is_pressed(&self, key: char) -> bool {
+        self.pressed.contains(&key)
     }
 }
 
-impl<'a, const N: u8, const K: u8> Widget for &Tonnetz<'a, N, K> {
+impl<const N: u8, const K: u8> Widget for &Tonnetz<'_, N, K> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.is_empty() {
             return;
@@ -227,34 +231,34 @@ impl<'a, const N: u8, const K: u8> Widget for &Tonnetz<'a, N, K> {
                 row.into_iter()
                     .zip(keys_layout.iter().skip(n % 2))
                     .filter_map(|(key, key_layout)| {
-                        key.and_then(|key| self.note(&key).map(|note| (note, key, key_layout)))
+                        key.and_then(|key| self.note(key).map(|note| (note, key, key_layout)))
                     })
                     .for_each(|(note, key, key_layout)| {
                         buf.set_style(area, self.style);
-                        TonnetzKey::new(note, key)
+                        KeyCard::new(note, key)
                             .block(self.block.clone().unwrap_or_else(|| {
                                 Block::bordered().border_type(BorderType::Rounded)
                             }))
-                            .bg(if self.is_pressed(&key) {
+                            .bg(if self.is_pressed(key) {
                                 Color::Black
                             } else {
                                 Color::Reset
                             })
-                            .render(*key_layout, buf)
+                            .render(*key_layout, buf);
                     });
             });
     }
 }
 
 #[derive(Debug)]
-struct TonnetzKey<'a> {
+struct KeyCard<'a> {
     note: Note,
     key: char,
     block: Option<Block<'a>>,
     style: Style,
 }
 
-impl<'a> TonnetzKey<'a> {
+impl<'a> KeyCard<'a> {
     fn new(note: Note, key: char) -> Self {
         Self {
             note,
@@ -275,7 +279,7 @@ impl<'a> TonnetzKey<'a> {
     }
 }
 
-impl<'a> Styled for TonnetzKey<'a> {
+impl Styled for KeyCard<'_> {
     type Item = Self;
 
     fn style(&self) -> Style {
@@ -287,7 +291,7 @@ impl<'a> Styled for TonnetzKey<'a> {
     }
 }
 
-impl<'a> Widget for &TonnetzKey<'a> {
+impl Widget for &KeyCard<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.is_empty() {
             return;
@@ -309,7 +313,7 @@ impl<'a> Widget for &TonnetzKey<'a> {
         let octave = self.note.octave();
 
         buf.set_style(area, self.style);
-        Line::from(s.to_string())
+        Line::from(s)
             .left_aligned()
             .style(
                 f.map_or_else(|| self.style.reversed(), |_| self.style)
@@ -318,13 +322,13 @@ impl<'a> Widget for &TonnetzKey<'a> {
             .render(top_layout[0], buf);
 
         buf.set_style(area, self.style);
-        Line::from(format!("{octave}"))
+        Line::from(octave.to_string())
             .centered()
             .style(f.map_or_else(|| self.style.reversed(), |_| self.style))
             .render(top_layout[1], buf);
 
         buf.set_style(area, self.style);
-        Line::from(f.map_or_else(|| s.to_string(), |f| f.to_string()))
+        Line::from(f.unwrap_or(s))
             .right_aligned()
             .style(
                 f.map_or_else(|| self.style.reversed(), |_| self.style)
@@ -342,21 +346,21 @@ impl<'a> Widget for &TonnetzKey<'a> {
             .render(rows_layout[1], buf);
 
         buf.set_style(area, self.style);
-        Line::from(format!("{}", u8::from(self.note)))
+        Line::from(u8::from(self.note).to_string())
             .left_aligned()
             .style(self.style.dim())
             .render(bottom_layout[0], buf);
 
         buf.set_style(area, self.style);
         let frequency = self.note.frequency();
-        Line::from(format!("{:.3} Hz", frequency))
+        Line::from(format!("{frequency:.3} Hz"))
             .right_aligned()
             .style(if 20.0 < frequency || frequency > 20_000.0 {
                 self.style.dim()
             } else {
                 self.style.dim().red()
             })
-            .render(bottom_layout[1], buf)
+            .render(bottom_layout[1], buf);
     }
 }
 
@@ -439,15 +443,15 @@ impl Default for KeyboardLayout {
 }
 
 impl KeyboardLayout {
-    fn contains(&self, key: &char) -> bool {
+    fn contains(&self, key: char) -> bool {
         self.rows()
             .into_iter()
             .flatten()
             .flatten()
-            .any(|candidate| candidate == *key)
+            .any(|candidate| candidate == key)
     }
 
-    fn find(&self, key: &char) -> Option<(usize, usize)> {
+    fn find(&self, key: char) -> Option<(usize, usize)> {
         self.rows()
             .into_iter()
             .enumerate()
@@ -457,7 +461,7 @@ impl KeyboardLayout {
                     .map(move |(k, candidate)| (n, k, candidate))
             })
             .filter_map(|(n, k, candidate)| candidate.map(|candidate| (n, k, candidate)))
-            .find_map(|(n, k, candidate)| (candidate == *key).then_some((n, k)))
+            .find_map(|(n, k, candidate)| (candidate == key).then_some((n, k)))
     }
 
     fn size(&self) -> (usize, usize) {
@@ -487,11 +491,11 @@ impl From<Note> for u8 {
 }
 
 impl Note {
-    fn frequency(&self) -> f32 {
-        440.0 * 2_f32.powf((self.0 as f32 - 69.0) / 12.0)
+    fn frequency(self) -> f32 {
+        440.0 * 2_f32.powf((f32::from(self.0) - 69.0) / 12.0)
     }
 
-    fn names(&self) -> (&'static str, Option<&'static str>) {
+    fn names(self) -> (&'static str, Option<&'static str>) {
         match self.0 % 12 {
             0 => ("C", None),
             1 => ("C#", Some("Db")),
@@ -509,7 +513,7 @@ impl Note {
         }
     }
 
-    fn octave(&self) -> i8 {
-        self.0 as i8 / 12 - 1
+    fn octave(self) -> i8 {
+        i8::try_from(self.0).unwrap() / 12 - 1
     }
 }
