@@ -20,10 +20,14 @@ use ratatui::{
     widgets::{Block, BorderType, Widget},
 };
 use rodio::{
-    OutputStreamBuilder, Source,
+    OutputStreamBuilder, Sample, SampleRate, Source,
     source::{Function, SignalGenerator},
 };
-use std::{collections::HashSet, sync::mpsc, thread};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex, mpsc},
+    thread,
+};
 use tui_big_text::{BigText, PixelSize};
 
 fn main() -> Result<()> {
@@ -98,16 +102,22 @@ impl<'a> Application<'a> {
         let (frequency_tx, frequency_rx) = mpsc::channel();
         thread::spawn(move || -> Result<()> {
             let stream_handle = OutputStreamBuilder::open_default_stream()?;
+            // TODO: consider using a Sink after we have our own system
+            let tape = Tape::new(stream_handle.config().sample_rate());
+            let sources_currently_being_played = Arc::clone(&tape.sources_currently_being_played);
+            stream_handle.mixer().add(tape);
             loop {
                 let frequency = frequency_rx.recv()?;
-                stream_handle.mixer().add(
+                sources_currently_being_played.lock().unwrap().push(
                     SignalGenerator::new(
                         stream_handle.config().sample_rate(),
                         frequency,
                         Function::Triangle,
                     )
-                    .amplify_normalized(0.2)
-                    .take_duration(Duration::from_millis(1000)),
+                    .fade_in(Duration::from_millis(100))
+                    .fade_out(Duration::from_millis(500))
+                    .take_duration(Duration::from_millis(1000))
+                    .amplify_normalized(0.3),
                 );
             }
         });
@@ -130,6 +140,56 @@ impl<'a> Application<'a> {
             }
         }
         Ok(())
+    }
+}
+
+struct Tape<S> {
+    sample_rate: SampleRate,
+    sources_currently_being_played: Arc<Mutex<Vec<S>>>,
+}
+
+impl<S> Tape<S> {
+    fn new(sample_rate: SampleRate) -> Self {
+        Self {
+            sample_rate,
+            sources_currently_being_played: Arc::new(Mutex::new(Vec::default())),
+        }
+    }
+}
+
+impl<S: Iterator<Item = Sample>> Iterator for Tape<S> {
+    type Item = Sample;
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut index = 0;
+        let mut total_sample = 0.0;
+        while index < self.sources_currently_being_played.lock().unwrap().len() {
+            if let Some(sample) = self.sources_currently_being_played.lock().unwrap()[index].next()
+            {
+                index += 1;
+                total_sample += sample;
+            } else {
+                self.sources_currently_being_played
+                    .lock()
+                    .unwrap()
+                    .swap_remove(index);
+            }
+        }
+        Some(total_sample)
+    }
+}
+
+impl<S: Iterator<Item = Sample>> Source for Tape<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+    fn channels(&self) -> rodio::ChannelCount {
+        1
+    }
+    fn sample_rate(&self) -> rodio::SampleRate {
+        self.sample_rate
+    }
+    fn total_duration(&self) -> Option<Duration> {
+        None
     }
 }
 
