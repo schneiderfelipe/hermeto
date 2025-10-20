@@ -195,7 +195,7 @@ impl<'a, const N: u8, const K: u8> Widget for &Tonnetz<'a, N, K> {
             .into_iter()
             .enumerate()
             .filter(|(n, _)| n % 2 == 1)
-            .all(|(_, row_layout)| row_layout.into_iter().last().unwrap().is_none())
+            .all(|(_, row_layout)| row_layout.into_iter().last().is_some_and(|c| c.is_none()))
         {
             Either::Left(rows_layout.iter().enumerate().map(move |(n, row_layout)| {
                 Layout::horizontal(match n % 2 {
