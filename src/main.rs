@@ -16,13 +16,15 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     prelude::BlockExt,
     style::{Color, Style, Styled, Stylize},
-    widgets::{Block, BorderType, Paragraph, Widget},
+    text::Line,
+    widgets::{Block, Widget},
 };
 use rodio::{
     OutputStreamBuilder, Source,
     source::{Function, SignalGenerator},
 };
 use std::{collections::HashSet, sync::mpsc, thread};
+use tui_big_text::{BigText, PixelSize};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -214,11 +216,7 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
                     })
                     .for_each(|(note, key, key_layout)| {
                         TonnetzKey::new(note, key)
-                            .block(if note.is_black_key() {
-                                Block::bordered()
-                            } else {
-                                Block::bordered().border_type(BorderType::Thick)
-                            })
+                            .block(Block::bordered())
                             .bg(if self.is_pressed(&key) {
                                 Color::Black
                             } else {
@@ -279,43 +277,67 @@ impl<'a> Widget for &TonnetzKey<'a> {
 
         buf.set_style(area, self.style);
         self.block.render(area, buf);
+
         let area = self.block.inner_if_some(area);
-
-        buf.set_style(area, self.style);
         let rows_layout =
-            Layout::vertical([Constraint::Max(1), Constraint::Min(1), Constraint::Max(1)])
+            Layout::vertical([Constraint::Fill(1), Constraint::Fill(2), Constraint::Max(1)])
                 .split(area);
+        let top_layout =
+            Layout::horizontal(Constraint::from_fills([1, 1, 1])).split(rows_layout[0]);
+        let bottom_layout =
+            Layout::horizontal(Constraint::from_fills([1, 2])).split(rows_layout[2]);
 
-        let note_layout = Layout::horizontal(Constraint::from_fills([1, 1])).split(rows_layout[0]);
         let (s, f) = self.note.names();
         let octave = self.note.octave();
-        Paragraph::new(format!("{s}{octave}"))
-            .bold()
-            .left_aligned()
-            .render(note_layout[0], buf);
-        Paragraph::new(f.map_or_else(|| format!("{s}{octave}"), |f| format!("{f}{octave}")))
-            .bold()
-            .right_aligned()
-            .render(note_layout[1], buf);
 
-        Paragraph::new(format!("<{}>", self.key.to_uppercase()))
-            .blue()
+        buf.set_style(area, self.style);
+        Line::from(s.to_string())
+            .left_aligned()
+            .style(
+                f.map_or_else(|| Style::default().reversed(), |_| Style::default())
+                    .bold(),
+            )
+            .render(top_layout[0], buf);
+
+        buf.set_style(area, self.style);
+        Line::from(format!("{octave}"))
             .centered()
+            .style(f.map_or_else(|| Style::default().reversed(), |_| Style::default()))
+            .render(top_layout[1], buf);
+
+        buf.set_style(area, self.style);
+        Line::from(f.map_or_else(|| s.to_string(), |f| f.to_string()))
+            .right_aligned()
+            .style(
+                f.map_or_else(|| Style::default().reversed(), |_| Style::default())
+                    .bold(),
+            )
+            .render(top_layout[2], buf);
+
+        buf.set_style(area, self.style);
+        BigText::builder()
+            .lines(vec![Line::from(format!("<{}>", self.key.to_uppercase()))])
+            .pixel_size(PixelSize::Quadrant)
+            .centered()
+            .style(Style::default().blue())
+            .build()
             .render(rows_layout[1], buf);
 
-        let data_layout = Layout::horizontal(Constraint::from_fills([1, 2])).split(rows_layout[2]);
-        Paragraph::new(format!("{}", u8::from(self.note)))
+        buf.set_style(area, self.style);
+        Line::from(format!("{}", u8::from(self.note)))
             .left_aligned()
-            .render(data_layout[0], buf);
-        Paragraph::new(format!("{:.3} Hz", self.note.frequency()))
+            .render(bottom_layout[0], buf);
+
+        buf.set_style(area, self.style);
+        Line::from(format!("{:.3} Hz", self.note.frequency()))
             .right_aligned()
-            .render(data_layout[1], buf)
+            .render(bottom_layout[1], buf)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 struct KeyboardLayout {
-    rows: [[Option<char>; 13]; 4],
+    rows: [[Option<char>; 14]; 4],
 }
 
 impl Default for KeyboardLayout {
@@ -336,6 +358,7 @@ impl Default for KeyboardLayout {
                     Some('0'),
                     Some('-'),
                     Some('='),
+                    None,
                 ],
                 [
                     None,
@@ -350,6 +373,7 @@ impl Default for KeyboardLayout {
                     Some('o'),
                     Some('p'),
                     None,
+                    Some('['),
                     None,
                 ],
                 [
@@ -366,6 +390,7 @@ impl Default for KeyboardLayout {
                     Some('l'),
                     Some('ç'),
                     None,
+                    Some(']'),
                 ],
                 [
                     None,
@@ -380,6 +405,7 @@ impl Default for KeyboardLayout {
                     Some(','),
                     Some('.'),
                     Some(';'),
+                    None,
                     None,
                 ],
             ],
@@ -420,7 +446,7 @@ impl KeyboardLayout {
         )
     }
 
-    fn rows(&self) -> [[Option<char>; 13]; 4] {
+    fn rows(&self) -> [[Option<char>; 14]; 4] {
         self.rows
     }
 }
@@ -454,14 +480,6 @@ impl Note {
             9 => ("A", None),
             10 => ("A#", Some("Bb")),
             11 => ("B", None),
-            _ => unreachable!(),
-        }
-    }
-
-    fn is_black_key(&self) -> bool {
-        match self.0 % 12 {
-            0 | 2 | 4 | 5 | 7 | 9 | 11 => false,
-            1 | 3 | 6 | 8 | 10 => true,
             _ => unreachable!(),
         }
     }
