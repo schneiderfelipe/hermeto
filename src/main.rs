@@ -25,6 +25,7 @@ use rodio::{
 };
 use std::{
     collections::HashSet,
+    mem::replace,
     sync::{Arc, Mutex, mpsc},
     thread,
 };
@@ -99,7 +100,7 @@ impl<'a> Application<'a> {
                 }
             }
         });
-        let (frequency_tx, frequency_rx) = mpsc::channel();
+        let (play_tx, play_rx) = mpsc::channel();
         thread::spawn(move || -> Result<()> {
             let stream_handle = OutputStreamBuilder::open_default_stream()?;
             // TODO: consider using a Sink after we have our own system
@@ -107,18 +108,46 @@ impl<'a> Application<'a> {
             let sources_currently_being_played = Arc::clone(&tape.sources_currently_being_played);
             stream_handle.mixer().add(tape);
             loop {
-                let frequency = frequency_rx.recv()?;
-                sources_currently_being_played.lock().unwrap().push(
-                    SignalGenerator::new(
-                        stream_handle.config().sample_rate(),
-                        frequency,
-                        Function::Triangle,
-                    )
-                    .fade_in(Duration::from_millis(100))
-                    .fade_out(Duration::from_millis(500))
-                    .take_duration(Duration::from_millis(1000))
-                    .amplify_normalized(0.3),
-                );
+                let play: Play = play_rx.recv()?;
+                match play {
+                    Play::On(note, key) => {
+                        let mut guard = sources_currently_being_played.lock().unwrap();
+                        match guard.iter().position(|(candidate, _)| *candidate == key) {
+                            None => guard.push((
+                                key,
+                                SignalGenerator::new(
+                                    stream_handle.config().sample_rate(),
+                                    note.frequency(),
+                                    Function::Triangle,
+                                )
+                                .take_duration(Duration::from_millis(10_000))
+                                .fade_in(Duration::from_millis(100))
+                                .fade_out(Duration::from_millis(5_000)),
+                            )),
+                            Some(index) => {
+                                let new_source = guard[index]
+                                    .1
+                                    .inner()
+                                    .clone()
+                                    .fade_out(Duration::from_millis(5_000));
+                                let _ = replace(&mut guard[index].1, new_source);
+                            }
+                        }
+                    }
+                    Play::Off(key) => {
+                        let mut guard = sources_currently_being_played.lock().unwrap();
+                        if let Some(index) =
+                            guard.iter().position(|(candidate, _)| *candidate == key)
+                        {
+                            let new_source = guard[index]
+                                .1
+                                .inner()
+                                .clone()
+                                .fade_out(Duration::from_millis(100));
+                            let _ = replace(&mut guard[index].1, new_source);
+                        }
+                    }
+                }
             }
         });
         while self.is_running {
@@ -132,10 +161,14 @@ impl<'a> Application<'a> {
                     self.tonnetz
                         .note(key)
                         .iter()
-                        .try_for_each(|note| frequency_tx.send(note.frequency()))?;
+                        .try_for_each(|note| play_tx.send(Play::On(*note, key)))?;
                 }
                 Message::Release(key) => {
                     self.tonnetz.release(key);
+                    self.tonnetz
+                        .note(key)
+                        .iter()
+                        .try_for_each(|_| play_tx.send(Play::Off(key)))?;
                 }
             }
         }
@@ -143,9 +176,14 @@ impl<'a> Application<'a> {
     }
 }
 
+enum Play {
+    On(Note, char),
+    Off(char),
+}
+
 struct Tape<S> {
     sample_rate: SampleRate,
-    sources_currently_being_played: Arc<Mutex<Vec<S>>>,
+    sources_currently_being_played: Arc<Mutex<Vec<(char, S)>>>,
 }
 
 impl<S> Tape<S> {
@@ -162,16 +200,13 @@ impl<S: Iterator<Item = Sample>> Iterator for Tape<S> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut index = 0;
         let mut total_sample = 0.0;
-        while index < self.sources_currently_being_played.lock().unwrap().len() {
-            if let Some(sample) = self.sources_currently_being_played.lock().unwrap()[index].next()
-            {
+        let mut guard = self.sources_currently_being_played.lock().unwrap();
+        while index < guard.len() {
+            if let Some(sample) = guard[index].1.next() {
                 index += 1;
                 total_sample += sample;
             } else {
-                self.sources_currently_being_played
-                    .lock()
-                    .unwrap()
-                    .swap_remove(index);
+                guard.swap_remove(index);
             }
         }
         Some(total_sample)
