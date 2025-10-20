@@ -237,8 +237,11 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<'_, N, K> {
                         buf.set_style(area, self.style);
                         KeyCard::new(note, key)
                             .block(self.block.clone().unwrap_or_else(|| {
-                                Block::bordered().border_type(BorderType::Rounded)
+                                Block::bordered()
+                                    .border_type(BorderType::Rounded)
+                                    .style(self.style)
                             }))
+                            .style(self.style)
                             .bg(if self.is_pressed(key) {
                                 Color::Black
                             } else {
@@ -348,18 +351,21 @@ impl Widget for &KeyCard<'_> {
         buf.set_style(area, self.style);
         Line::from(u8::from(self.note).to_string())
             .left_aligned()
-            .style(self.style.dim())
+            .style(self.style)
             .render(bottom_layout[0], buf);
 
         buf.set_style(area, self.style);
         let frequency = self.note.frequency();
         Line::from(format!("{frequency:.3} Hz"))
             .right_aligned()
-            .style(if 20.0 < frequency || frequency > 20_000.0 {
-                self.style.dim()
-            } else {
-                self.style.dim().red()
-            })
+            .style(
+                if 20.0 < frequency || frequency > 20_000.0 {
+                    self.style
+                } else {
+                    self.style.red()
+                }
+                .dim(),
+            )
             .render(bottom_layout[1], buf);
     }
 }
