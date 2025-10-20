@@ -14,8 +14,8 @@ use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Stylize},
-    text::Line,
+    prelude::BlockExt,
+    style::{Color, Style, Styled, Stylize},
     widgets::{Block, BorderType, Paragraph, Widget},
 };
 use rodio::{
@@ -134,7 +134,7 @@ struct Tonnetz<const N: u8, const K: u8> {
 impl<const N: u8, const K: u8> Default for Tonnetz<N, K> {
     fn default() -> Self {
         Self {
-            base_note: Note(27),
+            base_note: Note(34),
             keyboard_layout: Default::default(),
             pressed: Default::default(),
         }
@@ -168,6 +168,9 @@ impl<const N: u8, const K: u8> Tonnetz<N, K> {
 
 impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.is_empty() {
+            return;
+        }
         let (n_rows, max_n_keys) = self.keyboard_layout.size();
         let rows_layout = Layout::vertical(Constraint::from_fills(repeat_n(1, n_rows))).split(area);
         let tilted_rows_layout = if self
@@ -210,57 +213,103 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
                         key.and_then(|key| self.note(&key).map(|note| (note, key, key_layout)))
                     })
                     .for_each(|(note, key, key_layout)| {
-                        TonnetzKey::new(note, key, self.is_pressed(&key)).render(*key_layout, buf)
+                        TonnetzKey::new(note, key)
+                            .block(if note.is_black_key() {
+                                Block::bordered()
+                            } else {
+                                Block::bordered().border_type(BorderType::Thick)
+                            })
+                            .bg(if self.is_pressed(&key) {
+                                Color::Black
+                            } else {
+                                Color::Reset
+                            })
+                            .render(*key_layout, buf)
                     });
             });
     }
 }
 
 #[derive(Debug)]
-struct TonnetzKey {
+struct TonnetzKey<'a> {
     note: Note,
     key: char,
-    is_pressed: bool,
+    block: Option<Block<'a>>,
+    style: Style,
 }
 
-impl TonnetzKey {
-    fn new(note: Note, key: char, is_pressed: bool) -> Self {
+impl<'a> TonnetzKey<'a> {
+    fn new(note: Note, key: char) -> Self {
         Self {
             note,
             key,
-            is_pressed,
+            block: None,
+            style: Default::default(),
         }
+    }
+
+    fn block(mut self, block: Block<'a>) -> Self {
+        self.block = Some(block);
+        self
+    }
+
+    fn style(mut self, style: impl Into<Style>) -> Self {
+        self.style = style.into();
+        self
     }
 }
 
-impl Widget for TonnetzKey {
+impl<'a> Styled for TonnetzKey<'a> {
+    type Item = Self;
+
+    fn style(&self) -> Style {
+        self.style
+    }
+
+    fn set_style<S: Into<Style>>(self, style: S) -> Self::Item {
+        self.style(style)
+    }
+}
+
+impl<'a> Widget for &TonnetzKey<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        Paragraph::new(vec![
-            Line::from({
-                let (s, f) = self.note.names();
-                let octave = self.note.octave();
-                f.map_or_else(
-                    || format!("{s}{octave}"),
-                    |f| format!("{s}{octave}/{f}{octave}"),
-                )
-            })
-            .bold(),
-            Line::from(format!("{}", u8::from(self.note))),
-            Line::from(format!("{:.3} Hz", self.note.frequency())),
-            Line::from(format!("<{}>", self.key.to_uppercase()).blue()),
-        ])
-        .centered()
-        .block(if self.note.is_black_key() {
-            Block::bordered()
-        } else {
-            Block::bordered().border_type(BorderType::Thick)
-        })
-        .bg(if self.is_pressed {
-            Color::Black
-        } else {
-            Color::Reset
-        })
-        .render(area, buf)
+        if area.is_empty() {
+            return;
+        }
+
+        buf.set_style(area, self.style);
+        self.block.render(area, buf);
+        let area = self.block.inner_if_some(area);
+
+        buf.set_style(area, self.style);
+        let rows_layout =
+            Layout::vertical([Constraint::Max(1), Constraint::Min(1), Constraint::Max(1)])
+                .split(area);
+
+        let note_layout = Layout::horizontal(Constraint::from_fills([1, 1])).split(rows_layout[0]);
+        let (s, f) = self.note.names();
+        let octave = self.note.octave();
+        Paragraph::new(format!("{s}{octave}"))
+            .bold()
+            .left_aligned()
+            .render(note_layout[0], buf);
+        Paragraph::new(f.map_or_else(|| format!("{s}{octave}"), |f| format!("{f}{octave}")))
+            .bold()
+            .right_aligned()
+            .render(note_layout[1], buf);
+
+        Paragraph::new(format!("<{}>", self.key.to_uppercase()))
+            .blue()
+            .centered()
+            .render(rows_layout[1], buf);
+
+        let data_layout = Layout::horizontal(Constraint::from_fills([1, 2])).split(rows_layout[2]);
+        Paragraph::new(format!("{}", u8::from(self.note)))
+            .left_aligned()
+            .render(data_layout[0], buf);
+        Paragraph::new(format!("{:.3} Hz", self.note.frequency()))
+            .right_aligned()
+            .render(data_layout[1], buf)
     }
 }
 
