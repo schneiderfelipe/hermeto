@@ -210,34 +210,57 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
                         key.and_then(|key| self.note(&key).map(|note| (note, key, key_layout)))
                     })
                     .for_each(|(note, key, key_layout)| {
-                        Paragraph::new(vec![
-                            Line::from({
-                                let (s, f) = note.names();
-                                let octave = note.octave();
-                                f.map_or_else(
-                                    || format!("{s}{octave}"),
-                                    |f| format!("{s}{octave}/{f}{octave}"),
-                                )
-                            })
-                            .bold(),
-                            Line::from(format!("{}", u8::from(note))),
-                            Line::from(format!("{:.3} Hz", note.frequency())),
-                            Line::from(format!("<{}>", key.to_uppercase()).blue()),
-                        ])
-                        .centered()
-                        .block(if note.is_black_key() {
-                            Block::bordered()
-                        } else {
-                            Block::bordered().border_type(BorderType::Thick)
-                        })
-                        .bg(if self.is_pressed(&key) {
-                            Color::Black
-                        } else {
-                            Color::Reset
-                        })
-                        .render(*key_layout, buf)
+                        TonnetzKey::new(note, key, self.is_pressed(&key)).render(*key_layout, buf)
                     });
             });
+    }
+}
+
+#[derive(Debug)]
+struct TonnetzKey {
+    note: Note,
+    key: char,
+    is_pressed: bool,
+}
+
+impl TonnetzKey {
+    fn new(note: Note, key: char, is_pressed: bool) -> Self {
+        Self {
+            note,
+            key,
+            is_pressed,
+        }
+    }
+}
+
+impl Widget for TonnetzKey {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        Paragraph::new(vec![
+            Line::from({
+                let (s, f) = self.note.names();
+                let octave = self.note.octave();
+                f.map_or_else(
+                    || format!("{s}{octave}"),
+                    |f| format!("{s}{octave}/{f}{octave}"),
+                )
+            })
+            .bold(),
+            Line::from(format!("{}", u8::from(self.note))),
+            Line::from(format!("{:.3} Hz", self.note.frequency())),
+            Line::from(format!("<{}>", self.key.to_uppercase()).blue()),
+        ])
+        .centered()
+        .block(if self.note.is_black_key() {
+            Block::bordered()
+        } else {
+            Block::bordered().border_type(BorderType::Thick)
+        })
+        .bg(if self.is_pressed {
+            Color::Black
+        } else {
+            Color::Reset
+        })
+        .render(area, buf)
     }
 }
 
