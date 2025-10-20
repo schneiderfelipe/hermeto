@@ -17,7 +17,7 @@ use ratatui::{
     prelude::BlockExt,
     style::{Color, Style, Styled, Stylize},
     text::Line,
-    widgets::{Block, Widget},
+    widgets::{Block, BorderType, Widget},
 };
 use rodio::{
     OutputStreamBuilder, Source,
@@ -33,7 +33,7 @@ fn main() -> Result<()> {
         terminal.backend_mut(),
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
     )?;
-    let result = Application::default().run(&mut terminal);
+    let result = Application::new(Tonnetz::new(Note(21))).run(&mut terminal);
     execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     ratatui::restore();
     result
@@ -46,13 +46,20 @@ enum Message {
     Release(char),
 }
 
-#[derive(Debug, Default)]
-struct Application {
+#[derive(Debug)]
+struct Application<'a> {
+    tonnetz: Tonnetz<'a, 4, 7>,
     is_running: bool,
-    tonnetz: Tonnetz<4, 7>,
 }
 
-impl Application {
+impl<'a> Application<'a> {
+    fn new(tonnetz: Tonnetz<'a, 4, 7>) -> Self {
+        Self {
+            tonnetz,
+            is_running: false,
+        }
+    }
+
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         self.is_running = true;
         let (message_tx, message_rx) = mpsc::channel();
@@ -127,23 +134,25 @@ impl Application {
 }
 
 #[derive(Debug)]
-struct Tonnetz<const N: u8, const K: u8> {
+struct Tonnetz<'a, const N: u8, const K: u8> {
     base_note: Note,
     keyboard_layout: KeyboardLayout,
     pressed: HashSet<char>,
+    block: Option<Block<'a>>,
+    style: Style,
 }
 
-impl<const N: u8, const K: u8> Default for Tonnetz<N, K> {
-    fn default() -> Self {
+impl<'a, const N: u8, const K: u8> Tonnetz<'a, N, K> {
+    fn new(base_note: Note) -> Self {
         Self {
-            base_note: Note(34),
-            keyboard_layout: Default::default(),
-            pressed: Default::default(),
+            base_note,
+            keyboard_layout: KeyboardLayout::default(),
+            pressed: HashSet::default(),
+            block: None,
+            style: Style::default(),
         }
     }
-}
 
-impl<const N: u8, const K: u8> Tonnetz<N, K> {
     fn note(&self, key: &char) -> Option<Note> {
         self.keyboard_layout.find(key).map(|(n, k)| {
             let k = k - n / 2; // adjust for the tilt
@@ -168,11 +177,16 @@ impl<const N: u8, const K: u8> Tonnetz<N, K> {
     }
 }
 
-impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
+impl<'a, const N: u8, const K: u8> Widget for &Tonnetz<'a, N, K> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.is_empty() {
             return;
         }
+
+        buf.set_style(area, self.style);
+        self.block.render(area, buf);
+
+        let area = self.block.inner_if_some(area);
         let (n_rows, max_n_keys) = self.keyboard_layout.size();
         let rows_layout = Layout::vertical(Constraint::from_fills(repeat_n(1, n_rows))).split(area);
         let tilted_rows_layout = if self
@@ -203,6 +217,7 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
                 .split(*row_layout)
             }))
         };
+
         self.keyboard_layout
             .rows()
             .into_iter()
@@ -215,8 +230,11 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<N, K> {
                         key.and_then(|key| self.note(&key).map(|note| (note, key, key_layout)))
                     })
                     .for_each(|(note, key, key_layout)| {
+                        buf.set_style(area, self.style);
                         TonnetzKey::new(note, key)
-                            .block(Block::bordered())
+                            .block(self.block.clone().unwrap_or_else(|| {
+                                Block::bordered().border_type(BorderType::Rounded)
+                            }))
                             .bg(if self.is_pressed(&key) {
                                 Color::Black
                             } else {
@@ -242,7 +260,7 @@ impl<'a> TonnetzKey<'a> {
             note,
             key,
             block: None,
-            style: Default::default(),
+            style: Style::default(),
         }
     }
 
@@ -294,7 +312,7 @@ impl<'a> Widget for &TonnetzKey<'a> {
         Line::from(s.to_string())
             .left_aligned()
             .style(
-                f.map_or_else(|| Style::default().reversed(), |_| Style::default())
+                f.map_or_else(|| self.style.reversed(), |_| self.style)
                     .bold(),
             )
             .render(top_layout[0], buf);
@@ -302,14 +320,14 @@ impl<'a> Widget for &TonnetzKey<'a> {
         buf.set_style(area, self.style);
         Line::from(format!("{octave}"))
             .centered()
-            .style(f.map_or_else(|| Style::default().reversed(), |_| Style::default()))
+            .style(f.map_or_else(|| self.style.reversed(), |_| self.style))
             .render(top_layout[1], buf);
 
         buf.set_style(area, self.style);
         Line::from(f.map_or_else(|| s.to_string(), |f| f.to_string()))
             .right_aligned()
             .style(
-                f.map_or_else(|| Style::default().reversed(), |_| Style::default())
+                f.map_or_else(|| self.style.reversed(), |_| self.style)
                     .bold(),
             )
             .render(top_layout[2], buf);
@@ -319,18 +337,25 @@ impl<'a> Widget for &TonnetzKey<'a> {
             .lines(vec![Line::from(format!("<{}>", self.key.to_uppercase()))])
             .pixel_size(PixelSize::Quadrant)
             .centered()
-            .style(Style::default().blue())
+            .style(self.style.blue())
             .build()
             .render(rows_layout[1], buf);
 
         buf.set_style(area, self.style);
         Line::from(format!("{}", u8::from(self.note)))
             .left_aligned()
+            .style(self.style.dim())
             .render(bottom_layout[0], buf);
 
         buf.set_style(area, self.style);
-        Line::from(format!("{:.3} Hz", self.note.frequency()))
+        let frequency = self.note.frequency();
+        Line::from(format!("{:.3} Hz", frequency))
             .right_aligned()
+            .style(if 20.0 < frequency || frequency > 20_000.0 {
+                self.style.dim()
+            } else {
+                self.style.dim().red()
+            })
             .render(bottom_layout[1], buf)
     }
 }
