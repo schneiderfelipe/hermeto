@@ -26,7 +26,7 @@ use rodio::{
 };
 use std::{
     collections::HashSet,
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex, RwLock, mpsc},
     thread,
 };
 use tui_big_text::{BigText, PixelSize};
@@ -135,19 +135,22 @@ enum Mode {
 #[derive(Debug)]
 struct Application<'a> {
     tonnetz: Tonnetz<'a, 4, 7>,
-    mode: Option<Mode>,
+    mode: Arc<RwLock<Option<Mode>>>,
 }
 
 impl<'a> Application<'a> {
     fn new(tonnetz: Tonnetz<'a, 4, 7>) -> Self {
         Self {
             tonnetz,
-            mode: None,
+            mode: Arc::new(RwLock::new(None)),
         }
     }
 
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        self.mode = Some(Mode::Tonnetz);
+        {
+            *self.mode.write().unwrap() = Some(Mode::Tonnetz);
+        }
+        let mode = Arc::clone(&self.mode);
         let (message_tx, message_rx) = mpsc::channel();
         let keyboard_layout = self.tonnetz.keyboard_layout();
         thread::spawn(move || -> Result<()> {
@@ -158,9 +161,7 @@ impl<'a> Application<'a> {
                         modifiers,
                         kind: event::KeyEventKind::Press,
                         state,
-                    }) if keyboard_layout.contains(key) => {
-                        message_tx.send(Message::Press(key))?;
-                    }
+                    }) if keyboard_layout.contains(key) => message_tx.send(Message::Press(key))?,
                     event::Event::Key(event::KeyEvent {
                         code: event::KeyCode::Char(key),
                         modifiers,
@@ -174,17 +175,17 @@ impl<'a> Application<'a> {
                         modifiers,
                         kind: event::KeyEventKind::Press,
                         state,
-                    }) => {
-                        message_tx.send(Message::SwitchTo(Mode::Logs))?;
-                    }
+                    }) => match *mode.read().unwrap() {
+                        Some(Mode::Tonnetz) => message_tx.send(Message::SwitchTo(Mode::Logs))?,
+                        Some(Mode::Logs) => message_tx.send(Message::SwitchTo(Mode::Tonnetz))?,
+                        None => {}
+                    },
                     event::Event::Key(event::KeyEvent {
                         code: event::KeyCode::Esc,
                         modifiers,
                         kind: event::KeyEventKind::Press,
                         state,
-                    }) => {
-                        message_tx.send(Message::Quit)?;
-                    }
+                    }) => message_tx.send(Message::Quit)?,
                     _ => (),
                 }
             }
@@ -245,11 +246,15 @@ impl<'a> Application<'a> {
                 }
             }
         });
-        while self.mode.is_some() {
-            terminal.draw(|frame| match self.mode {
+        loop {
+            let mode = self.mode.read().unwrap();
+            if mode.is_none() {
+                break;
+            }
+            terminal.draw(|frame| match *mode {
                 Some(Mode::Tonnetz) => frame.render_widget(&self.tonnetz, frame.area()),
-                Some(Mode::Logs) => todo!(),
-                None => todo!(),
+                Some(Mode::Logs) => frame.render_widget("Logs go here", frame.area()),
+                None => {}
             })?;
             match message_rx.recv()? {
                 Message::Press(key) => {
@@ -266,8 +271,14 @@ impl<'a> Application<'a> {
                         .iter()
                         .try_for_each(|_| play_tx.send(Play::Off(key)))?;
                 }
-                Message::SwitchTo(mode) => self.mode = Some(mode),
-                Message::Quit => self.mode = None,
+                Message::SwitchTo(next) => {
+                    drop(mode);
+                    *self.mode.write().unwrap() = Some(next);
+                }
+                Message::Quit => {
+                    drop(mode);
+                    *self.mode.write().unwrap() = None;
+                }
             }
         }
         Ok(())
