@@ -231,11 +231,9 @@ impl<'a> Application<'a> {
                 }
             }
         });
-        while self.mode.is_some() {
-            terminal.draw(|frame| {
-                if let Some(Mode::Running) = self.mode {
-                    frame.render_widget(&self.tonnetz, frame.area());
-                }
+        while let Some(mode) = self.mode {
+            terminal.draw(|frame| match mode {
+                Mode::Running => frame.render_widget(&self.tonnetz, frame.area()),
             })?;
             match message_rx.recv()? {
                 Message::Press(key) => {
