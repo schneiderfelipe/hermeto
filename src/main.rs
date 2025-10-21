@@ -1,3 +1,4 @@
+use cli_log::Level;
 use color_eyre::Result;
 use core::{
     iter::{once, repeat_n},
@@ -32,6 +33,7 @@ use std::{
 use tui_big_text::{BigText, PixelSize};
 
 fn main() -> Result<()> {
+    cli_log::init_cli_log!();
     color_eyre::install()?;
     let mut terminal = ratatui::init();
     execute!(
@@ -41,6 +43,8 @@ fn main() -> Result<()> {
     let result = Application::new(Tonnetz::new(Note(21))).run(&mut terminal);
     execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     ratatui::restore();
+    cli_log::log_mem(Level::Info);
+    cli_log::info!("bye");
     result
 }
 
