@@ -45,6 +45,76 @@ fn main() -> Result<()> {
 }
 
 #[derive(Debug)]
+enum Play {
+    On(Note, char),
+    Off(char),
+}
+
+#[derive(Debug)]
+struct CassetteController<S> {
+    sample_rate: SampleRate,
+    sources_currently_being_played: Vec<(char, S)>,
+}
+
+impl<S> CassetteController<S> {
+    fn new(sample_rate: SampleRate) -> Self {
+        Self {
+            sample_rate,
+            sources_currently_being_played: Vec::default(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CassetteTape<S> {
+    controller: Arc<Mutex<CassetteController<S>>>,
+}
+
+impl<S> CassetteTape<S> {
+    fn new(sample_rate: SampleRate) -> Self {
+        let controller = Arc::new(Mutex::new(CassetteController::new(sample_rate)));
+        Self { controller }
+    }
+    fn controller(&self) -> Arc<Mutex<CassetteController<S>>> {
+        Arc::clone(&self.controller)
+    }
+}
+
+impl<S: Iterator<Item = Sample>> Iterator for CassetteTape<S> {
+    type Item = Sample;
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut index = 0;
+        let mut total_sample = 0.0;
+        let mut controller = self.controller.lock().unwrap();
+        while index < controller.sources_currently_being_played.len() {
+            if let Some(sample) = controller.sources_currently_being_played[index].1.next() {
+                index += 1;
+                total_sample += sample;
+            } else {
+                controller.sources_currently_being_played.swap_remove(index);
+            }
+        }
+        Some(total_sample)
+    }
+}
+
+impl<S: Iterator<Item = Sample>> Source for CassetteTape<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+    fn channels(&self) -> rodio::ChannelCount {
+        1
+    }
+    fn sample_rate(&self) -> rodio::SampleRate {
+        let controller = self.controller.lock().unwrap();
+        controller.sample_rate
+    }
+    fn total_duration(&self) -> Option<Duration> {
+        None
+    }
+}
+
+#[derive(Debug)]
 enum Message {
     Quit,
     Press(char),
@@ -102,18 +172,22 @@ impl<'a> Application<'a> {
         });
         let (play_tx, play_rx) = mpsc::channel();
         thread::spawn(move || -> Result<()> {
-            let stream_handle = OutputStreamBuilder::open_default_stream()?;
             // TODO: consider using a Sink after we have our own system
-            let tape = Tape::new(stream_handle.config().sample_rate());
-            let sources_currently_being_played = Arc::clone(&tape.sources_currently_being_played);
+            let stream_handle = OutputStreamBuilder::open_default_stream()?;
+            let tape = CassetteTape::new(stream_handle.config().sample_rate());
+            let controller = tape.controller();
             stream_handle.mixer().add(tape);
             loop {
                 let play: Play = play_rx.recv()?;
                 match play {
                     Play::On(note, key) => {
-                        let mut guard = sources_currently_being_played.lock().unwrap();
-                        match guard.iter().position(|(candidate, _)| *candidate == key) {
-                            None => guard.push((
+                        let mut controller = controller.lock().unwrap();
+                        match controller
+                            .sources_currently_being_played
+                            .iter()
+                            .position(|(candidate, _)| *candidate == key)
+                        {
+                            None => controller.sources_currently_being_played.push((
                                 key,
                                 SignalGenerator::new(
                                     stream_handle.config().sample_rate(),
@@ -125,26 +199,34 @@ impl<'a> Application<'a> {
                                 .fade_out(Duration::from_millis(5_000)),
                             )),
                             Some(index) => {
-                                let new_source = guard[index]
+                                let new_source = controller.sources_currently_being_played[index]
                                     .1
                                     .inner()
                                     .clone()
                                     .fade_out(Duration::from_millis(5_000));
-                                let _ = replace(&mut guard[index].1, new_source);
+                                let _ = replace(
+                                    &mut controller.sources_currently_being_played[index].1,
+                                    new_source,
+                                );
                             }
                         }
                     }
                     Play::Off(key) => {
-                        let mut guard = sources_currently_being_played.lock().unwrap();
-                        if let Some(index) =
-                            guard.iter().position(|(candidate, _)| *candidate == key)
+                        let mut controller = controller.lock().unwrap();
+                        if let Some(index) = controller
+                            .sources_currently_being_played
+                            .iter()
+                            .position(|(candidate, _)| *candidate == key)
                         {
-                            let new_source = guard[index]
+                            let new_source = controller.sources_currently_being_played[index]
                                 .1
                                 .inner()
                                 .clone()
                                 .fade_out(Duration::from_millis(100));
-                            let _ = replace(&mut guard[index].1, new_source);
+                            let _ = replace(
+                                &mut controller.sources_currently_being_played[index].1,
+                                new_source,
+                            );
                         }
                     }
                 }
@@ -173,58 +255,6 @@ impl<'a> Application<'a> {
             }
         }
         Ok(())
-    }
-}
-
-enum Play {
-    On(Note, char),
-    Off(char),
-}
-
-struct Tape<S> {
-    sample_rate: SampleRate,
-    sources_currently_being_played: Arc<Mutex<Vec<(char, S)>>>,
-}
-
-impl<S> Tape<S> {
-    fn new(sample_rate: SampleRate) -> Self {
-        Self {
-            sample_rate,
-            sources_currently_being_played: Arc::new(Mutex::new(Vec::default())),
-        }
-    }
-}
-
-impl<S: Iterator<Item = Sample>> Iterator for Tape<S> {
-    type Item = Sample;
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut index = 0;
-        let mut total_sample = 0.0;
-        let mut guard = self.sources_currently_being_played.lock().unwrap();
-        while index < guard.len() {
-            if let Some(sample) = guard[index].1.next() {
-                index += 1;
-                total_sample += sample;
-            } else {
-                guard.swap_remove(index);
-            }
-        }
-        Some(total_sample)
-    }
-}
-
-impl<S: Iterator<Item = Sample>> Source for Tape<S> {
-    fn current_span_len(&self) -> Option<usize> {
-        None
-    }
-    fn channels(&self) -> rodio::ChannelCount {
-        1
-    }
-    fn sample_rate(&self) -> rodio::SampleRate {
-        self.sample_rate
-    }
-    fn total_duration(&self) -> Option<Duration> {
-        None
     }
 }
 
