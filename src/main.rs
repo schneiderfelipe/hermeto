@@ -1,6 +1,7 @@
 use color_eyre::Result;
 use core::{
     iter::{once, repeat_n},
+    mem::replace,
     time::Duration,
 };
 use crossterm::{
@@ -25,7 +26,6 @@ use rodio::{
 };
 use std::{
     collections::HashSet,
-    mem::replace,
     sync::{Arc, Mutex, mpsc},
     thread,
 };
@@ -53,14 +53,14 @@ enum Play {
 #[derive(Debug)]
 struct CassetteController<S> {
     sample_rate: SampleRate,
-    sources_currently_being_played: Vec<(char, S)>,
+    sources: Vec<(char, S)>,
 }
 
 impl<S> CassetteController<S> {
     fn new(sample_rate: SampleRate) -> Self {
         Self {
             sample_rate,
-            sources_currently_being_played: Vec::default(),
+            sources: Vec::default(),
         }
     }
 }
@@ -72,8 +72,9 @@ struct CassetteTape<S> {
 
 impl<S> CassetteTape<S> {
     fn new(sample_rate: SampleRate) -> Self {
-        let controller = Arc::new(Mutex::new(CassetteController::new(sample_rate)));
-        Self { controller }
+        Self {
+            controller: Arc::new(Mutex::new(CassetteController::new(sample_rate))),
+        }
     }
     fn controller(&self) -> Arc<Mutex<CassetteController<S>>> {
         Arc::clone(&self.controller)
@@ -86,12 +87,12 @@ impl<S: Iterator<Item = Sample>> Iterator for CassetteTape<S> {
         let mut index = 0;
         let mut total_sample = 0.0;
         let mut controller = self.controller.lock().unwrap();
-        while index < controller.sources_currently_being_played.len() {
-            if let Some(sample) = controller.sources_currently_being_played[index].1.next() {
+        while index < controller.sources.len() {
+            if let Some(sample) = controller.sources[index].1.next() {
                 index += 1;
                 total_sample += sample;
             } else {
-                controller.sources_currently_being_played.swap_remove(index);
+                controller.sources.swap_remove(index);
             }
         }
         Some(total_sample)
@@ -106,8 +107,7 @@ impl<S: Iterator<Item = Sample>> Source for CassetteTape<S> {
         1
     }
     fn sample_rate(&self) -> rodio::SampleRate {
-        let controller = self.controller.lock().unwrap();
-        controller.sample_rate
+        self.controller.lock().unwrap().sample_rate
     }
     fn total_duration(&self) -> Option<Duration> {
         None
@@ -183,11 +183,11 @@ impl<'a> Application<'a> {
                     Play::On(note, key) => {
                         let mut controller = controller.lock().unwrap();
                         match controller
-                            .sources_currently_being_played
+                            .sources
                             .iter()
                             .position(|(candidate, _)| *candidate == key)
                         {
-                            None => controller.sources_currently_being_played.push((
+                            None => controller.sources.push((
                                 key,
                                 SignalGenerator::new(
                                     stream_handle.config().sample_rate(),
@@ -199,34 +199,28 @@ impl<'a> Application<'a> {
                                 .fade_out(Duration::from_millis(5_000)),
                             )),
                             Some(index) => {
-                                let new_source = controller.sources_currently_being_played[index]
+                                let new_source = controller.sources[index]
                                     .1
                                     .inner()
                                     .clone()
                                     .fade_out(Duration::from_millis(5_000));
-                                let _ = replace(
-                                    &mut controller.sources_currently_being_played[index].1,
-                                    new_source,
-                                );
+                                let _ = replace(&mut controller.sources[index].1, new_source);
                             }
                         }
                     }
                     Play::Off(key) => {
                         let mut controller = controller.lock().unwrap();
                         if let Some(index) = controller
-                            .sources_currently_being_played
+                            .sources
                             .iter()
                             .position(|(candidate, _)| *candidate == key)
                         {
-                            let new_source = controller.sources_currently_being_played[index]
+                            let new_source = controller.sources[index]
                                 .1
                                 .inner()
                                 .clone()
                                 .fade_out(Duration::from_millis(100));
-                            let _ = replace(
-                                &mut controller.sources_currently_being_played[index].1,
-                                new_source,
-                            );
+                            let _ = replace(&mut controller.sources[index].1, new_source);
                         }
                     }
                 }
