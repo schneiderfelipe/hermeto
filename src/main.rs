@@ -122,35 +122,30 @@ impl<S> CassetteController<S> {
 enum Message {
     Press(char),
     Release(char),
-    SwitchTo(Mode),
     Quit,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum Mode {
-    Tonnetz,
-    Logs,
+    Running,
 }
 
 #[derive(Debug)]
 struct Application<'a> {
+    mode: Option<Mode>,
     tonnetz: Tonnetz<'a, 4, 7>,
-    mode: Arc<Mutex<Option<Mode>>>,
 }
 
 impl<'a> Application<'a> {
     fn new(tonnetz: Tonnetz<'a, 4, 7>) -> Self {
         Self {
+            mode: None,
             tonnetz,
-            mode: Arc::new(Mutex::new(None)),
         }
     }
 
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        {
-            *self.mode.lock().unwrap() = Some(Mode::Tonnetz);
-        }
-        let mode = Arc::clone(&self.mode);
+        self.mode = Some(Mode::Running);
         let (message_tx, message_rx) = mpsc::channel();
         let keyboard_layout = self.tonnetz.keyboard_layout();
         thread::spawn(move || -> Result<()> {
@@ -168,18 +163,8 @@ impl<'a> Application<'a> {
                         kind: event::KeyEventKind::Release,
                         state,
                     }) if keyboard_layout.contains(key) => {
-                        message_tx.send(Message::Release(key))?
+                        message_tx.send(Message::Release(key))?;
                     }
-                    event::Event::Key(event::KeyEvent {
-                        code: event::KeyCode::F(12),
-                        modifiers,
-                        kind: event::KeyEventKind::Press,
-                        state,
-                    }) => match *mode.lock().unwrap() {
-                        Some(Mode::Tonnetz) => message_tx.send(Message::SwitchTo(Mode::Logs))?,
-                        Some(Mode::Logs) => message_tx.send(Message::SwitchTo(Mode::Tonnetz))?,
-                        None => {}
-                    },
                     event::Event::Key(event::KeyEvent {
                         code: event::KeyCode::Esc,
                         modifiers,
@@ -246,11 +231,11 @@ impl<'a> Application<'a> {
                 }
             }
         });
-        while self.mode.lock().unwrap().is_some() {
-            terminal.draw(|frame| match *self.mode.lock().unwrap() {
-                Some(Mode::Tonnetz) => frame.render_widget(&self.tonnetz, frame.area()),
-                Some(Mode::Logs) => frame.render_widget("Logs go here", frame.area()),
-                None => {}
+        while self.mode.is_some() {
+            terminal.draw(|frame| {
+                if let Some(Mode::Running) = self.mode {
+                    frame.render_widget(&self.tonnetz, frame.area());
+                }
             })?;
             match message_rx.recv()? {
                 Message::Press(key) => {
@@ -258,17 +243,16 @@ impl<'a> Application<'a> {
                     self.tonnetz
                         .note(key)
                         .iter()
-                        .try_for_each(|note| play_tx.send(Play::On(*note, key)))?
+                        .try_for_each(|note| play_tx.send(Play::On(*note, key)))?;
                 }
                 Message::Release(key) => {
                     self.tonnetz.release(key);
                     self.tonnetz
                         .note(key)
                         .iter()
-                        .try_for_each(|_| play_tx.send(Play::Off(key)))?
+                        .try_for_each(|_| play_tx.send(Play::Off(key)))?;
                 }
-                Message::SwitchTo(next) => *self.mode.lock().unwrap() = Some(next),
-                Message::Quit => *self.mode.lock().unwrap() = None,
+                Message::Quit => self.mode = None,
             }
         }
         Ok(())
