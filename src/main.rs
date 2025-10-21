@@ -33,8 +33,8 @@ use std::{
 use tui_big_text::{BigText, PixelSize};
 
 fn main() -> Result<()> {
-    cli_log::init_cli_log!();
     color_eyre::install()?;
+    cli_log::init_cli_log!();
     let mut terminal = ratatui::init();
     execute!(
         terminal.backend_mut(),
@@ -44,7 +44,6 @@ fn main() -> Result<()> {
     execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     ratatui::restore();
     cli_log::log_mem(Level::Info);
-    cli_log::info!("bye");
     result
 }
 
@@ -203,16 +202,16 @@ impl<'a> Application<'a> {
                                     note.frequency(),
                                     Function::Triangle,
                                 )
-                                .take_duration(Duration::from_millis(10_000))
-                                .fade_in(Duration::from_millis(100))
-                                .fade_out(Duration::from_millis(5_000)),
+                                .take_duration(Duration::from_millis(6_000))
+                                .fade_in(Duration::from_millis(60))
+                                .fade_out(Duration::from_millis(3_000)),
                             )),
                             Some(index) => {
                                 let new_source = controller.sources[index]
                                     .1
                                     .inner()
                                     .clone()
-                                    .fade_out(Duration::from_millis(5_000));
+                                    .fade_out(Duration::from_millis(3_000));
                                 let _ = replace(&mut controller.sources[index].1, new_source);
                             }
                         }
@@ -228,7 +227,7 @@ impl<'a> Application<'a> {
                                 .1
                                 .inner()
                                 .clone()
-                                .fade_out(Duration::from_millis(100));
+                                .fade_out(Duration::from_millis(60));
                             let _ = replace(&mut controller.sources[index].1, new_source);
                         }
                     }
