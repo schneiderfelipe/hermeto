@@ -45,39 +45,20 @@ fn main() -> Result<()> {
 }
 
 #[derive(Debug)]
-enum Play {
-    On(Note, char),
-    Off(char),
-}
-
-#[derive(Debug)]
-struct CassetteController<S> {
-    sample_rate: SampleRate,
-    sources: Vec<(char, S)>,
-}
-
-impl<S> CassetteController<S> {
-    fn new(sample_rate: SampleRate) -> Self {
-        Self {
-            sample_rate,
-            sources: Vec::default(),
-        }
-    }
-}
-
-#[derive(Debug)]
 struct CassetteTape<S> {
-    controller: Arc<Mutex<CassetteController<S>>>,
+    controller: CassetteController<S>,
 }
 
 impl<S> CassetteTape<S> {
     fn new(sample_rate: SampleRate) -> Self {
         Self {
-            controller: Arc::new(Mutex::new(CassetteController::new(sample_rate))),
+            controller: CassetteController::new(sample_rate),
         }
     }
-    fn controller(&self) -> Arc<Mutex<CassetteController<S>>> {
-        Arc::clone(&self.controller)
+}
+impl<S: Clone> CassetteTape<S> {
+    fn controller(&self) -> CassetteController<S> {
+        self.controller.clone()
     }
 }
 
@@ -86,7 +67,7 @@ impl<S: Iterator<Item = Sample>> Iterator for CassetteTape<S> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut index = 0;
         let mut total_sample = 0.0;
-        let mut controller = self.controller.lock().unwrap();
+        let mut controller = self.controller.0.lock().unwrap();
         while index < controller.sources.len() {
             if let Some(sample) = controller.sources[index].1.next() {
                 index += 1;
@@ -107,10 +88,33 @@ impl<S: Iterator<Item = Sample>> Source for CassetteTape<S> {
         1
     }
     fn sample_rate(&self) -> rodio::SampleRate {
-        self.controller.lock().unwrap().sample_rate
+        self.controller.0.lock().unwrap().sample_rate
     }
     fn total_duration(&self) -> Option<Duration> {
         None
+    }
+}
+
+#[derive(Debug)]
+enum Play {
+    On(Note, char),
+    Off(char),
+}
+
+#[derive(Clone, Debug)]
+struct CassetteController<S>(Arc<Mutex<CassetteControllerInner<S>>>);
+#[derive(Debug)]
+struct CassetteControllerInner<S> {
+    sample_rate: SampleRate,
+    sources: Vec<(char, S)>,
+}
+
+impl<S> CassetteController<S> {
+    fn new(sample_rate: SampleRate) -> Self {
+        Self(Arc::new(Mutex::new(CassetteControllerInner {
+            sample_rate,
+            sources: Vec::default(),
+        })))
     }
 }
 
@@ -181,7 +185,7 @@ impl<'a> Application<'a> {
                 let play: Play = play_rx.recv()?;
                 match play {
                     Play::On(note, key) => {
-                        let mut controller = controller.lock().unwrap();
+                        let mut controller = controller.0.lock().unwrap();
                         match controller
                             .sources
                             .iter()
@@ -209,7 +213,7 @@ impl<'a> Application<'a> {
                         }
                     }
                     Play::Off(key) => {
-                        let mut controller = controller.lock().unwrap();
+                        let mut controller = controller.0.lock().unwrap();
                         if let Some(index) = controller
                             .sources
                             .iter()
