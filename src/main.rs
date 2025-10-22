@@ -23,7 +23,7 @@ use ratatui::{
 };
 use rodio::{
     OutputStreamBuilder, Sample, SampleRate, Source,
-    source::{Function, SignalGenerator},
+    source::{FadeIn, FadeOut, Function, SignalGenerator, TakeDuration},
 };
 use std::{
     collections::HashSet,
@@ -48,24 +48,24 @@ fn main() -> Result<()> {
 }
 
 #[derive(Debug)]
-struct CassetteTape<S> {
-    controller: CassetteController<S>,
+struct CassetteTape {
+    controller: CassetteController,
 }
 
-impl<S> CassetteTape<S> {
+impl CassetteTape {
     fn new(sample_rate: SampleRate) -> Self {
         Self {
             controller: CassetteController::new(sample_rate),
         }
     }
 }
-impl<S: Clone> CassetteTape<S> {
-    fn controller(&self) -> CassetteController<S> {
+impl CassetteTape {
+    fn controller(&self) -> CassetteController {
         self.controller.clone()
     }
 }
 
-impl<S: Iterator<Item = Sample>> Iterator for CassetteTape<S> {
+impl Iterator for CassetteTape {
     type Item = Sample;
     fn next(&mut self) -> Option<Self::Item> {
         let mut index = 0;
@@ -83,7 +83,7 @@ impl<S: Iterator<Item = Sample>> Iterator for CassetteTape<S> {
     }
 }
 
-impl<S: Iterator<Item = Sample>> Source for CassetteTape<S> {
+impl Source for CassetteTape {
     fn current_span_len(&self) -> Option<usize> {
         None
     }
@@ -105,19 +105,63 @@ enum Play {
 }
 
 #[derive(Clone, Debug)]
-struct CassetteController<S>(Arc<Mutex<CassetteControllerInner<S>>>);
+struct CassetteController(Arc<Mutex<CassetteControllerInner>>);
 #[derive(Debug)]
-struct CassetteControllerInner<S> {
+struct CassetteControllerInner {
     sample_rate: SampleRate,
-    sources: Vec<(char, S)>,
+    sources: Vec<(char, FadeOut<FadeIn<TakeDuration<SignalGenerator>>>)>,
 }
 
-impl<S> CassetteController<S> {
+impl CassetteController {
     fn new(sample_rate: SampleRate) -> Self {
         Self(Arc::new(Mutex::new(CassetteControllerInner {
             sample_rate,
             sources: Vec::default(),
         })))
+    }
+
+    fn on(&self, key: char, note: Note) {
+        let mut controller = self.0.lock().unwrap();
+        match controller
+            .sources
+            .iter()
+            .position(|(candidate, _)| *candidate == key)
+        {
+            None => {
+                let sample_rate = controller.sample_rate;
+                controller.sources.push((
+                    key,
+                    SignalGenerator::new(sample_rate, note.frequency(), Function::Triangle)
+                        .take_duration(Duration::from_millis(6_000))
+                        .fade_in(Duration::from_millis(60))
+                        .fade_out(Duration::from_millis(3_000)),
+                ))
+            }
+            Some(index) => {
+                let new_source = controller.sources[index]
+                    .1
+                    .inner()
+                    .clone()
+                    .fade_out(Duration::from_millis(3_000));
+                let _ = replace(&mut controller.sources[index].1, new_source);
+            }
+        }
+    }
+
+    fn off(&self, key: char) {
+        let mut controller = self.0.lock().unwrap();
+        if let Some(index) = controller
+            .sources
+            .iter()
+            .position(|(candidate, _)| *candidate == key)
+        {
+            let new_source = controller.sources[index]
+                .1
+                .inner()
+                .clone()
+                .fade_out(Duration::from_millis(60));
+            let _ = replace(&mut controller.sources[index].1, new_source);
+        }
     }
 }
 
@@ -182,55 +226,15 @@ impl<'a> Application<'a> {
         thread::spawn(move || -> Result<()> {
             // TODO: consider using a Sink after we have our own system
             let stream_handle = OutputStreamBuilder::open_default_stream()?;
-            let tape = CassetteTape::new(stream_handle.config().sample_rate());
+            let sample_rate = stream_handle.config().sample_rate();
+            let tape = CassetteTape::new(sample_rate);
             let controller = tape.controller();
             stream_handle.mixer().add(tape);
             loop {
-                let play: Play = play_rx.recv()?;
+                let play = play_rx.recv()?;
                 match play {
-                    Play::On(note, key) => {
-                        let mut controller = controller.0.lock().unwrap();
-                        match controller
-                            .sources
-                            .iter()
-                            .position(|(candidate, _)| *candidate == key)
-                        {
-                            None => controller.sources.push((
-                                key,
-                                SignalGenerator::new(
-                                    stream_handle.config().sample_rate(),
-                                    note.frequency(),
-                                    Function::Triangle,
-                                )
-                                .take_duration(Duration::from_millis(6_000))
-                                .fade_in(Duration::from_millis(60))
-                                .fade_out(Duration::from_millis(3_000)),
-                            )),
-                            Some(index) => {
-                                let new_source = controller.sources[index]
-                                    .1
-                                    .inner()
-                                    .clone()
-                                    .fade_out(Duration::from_millis(3_000));
-                                let _ = replace(&mut controller.sources[index].1, new_source);
-                            }
-                        }
-                    }
-                    Play::Off(key) => {
-                        let mut controller = controller.0.lock().unwrap();
-                        if let Some(index) = controller
-                            .sources
-                            .iter()
-                            .position(|(candidate, _)| *candidate == key)
-                        {
-                            let new_source = controller.sources[index]
-                                .1
-                                .inner()
-                                .clone()
-                                .fade_out(Duration::from_millis(60));
-                            let _ = replace(&mut controller.sources[index].1, new_source);
-                        }
-                    }
+                    Play::On(note, key) => controller.on(key, note),
+                    Play::Off(key) => controller.off(key),
                 }
             }
         });
