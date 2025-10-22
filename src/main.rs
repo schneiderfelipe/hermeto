@@ -7,15 +7,7 @@ use crossterm::{
     },
     execute,
 };
-use ratatui::{
-    DefaultTerminal,
-    buffer::Buffer,
-    layout::{Constraint, Layout, Rect},
-    prelude::BlockExt,
-    style::{Style, Styled, Stylize},
-    text::Line,
-    widgets::{Block, Widget},
-};
+use ratatui::{DefaultTerminal, prelude::*, style::Styled, widgets::Block};
 use rodio::{
     OutputStreamBuilder, Sample, SampleRate, Source,
     source::{FadeIn, FadeOut, Function, SignalGenerator, TakeDuration},

@@ -2,11 +2,8 @@ use crate::{KeyCard, KeyboardLayout, Note};
 use core::iter::{once, repeat_n};
 use either::Either;
 use ratatui::{
-    buffer::Buffer,
-    layout::{Constraint, Layout, Rect},
-    prelude::BlockExt,
-    style::{Color, Style, Stylize},
-    widgets::{Block, BorderType, Widget},
+    prelude::*,
+    widgets::{Block, BorderType},
 };
 use std::collections::HashSet;
 
