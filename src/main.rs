@@ -13,6 +13,7 @@ use rodio::{
     source::{FadeIn, FadeOut, Function, SignalGenerator, TakeDuration},
 };
 use std::{
+    collections::{HashMap, hash_map::Entry},
     sync::{Arc, Mutex, mpsc},
     thread,
 };
@@ -57,17 +58,18 @@ impl CassetteTape {
 impl Iterator for CassetteTape {
     type Item = Sample;
     fn next(&mut self) -> Option<Self::Item> {
-        let mut index = 0;
         let mut total_sample = 0.0;
-        let mut controller = self.controller.0.lock().unwrap();
-        while index < controller.sources.len() {
-            if let Some(sample) = controller.sources[index].1.next() {
-                index += 1;
-                total_sample += sample;
-            } else {
-                controller.sources.swap_remove(index);
-            }
-        }
+        self.controller
+            .0
+            .lock()
+            .unwrap()
+            .sources
+            .retain(|_, source| {
+                source.next().is_some_and(|sample| {
+                    total_sample += sample;
+                    true
+                })
+            });
         Some(total_sample)
     }
 }
@@ -89,7 +91,7 @@ impl Source for CassetteTape {
 
 #[derive(Clone, Copy, Debug)]
 enum Play {
-    On(Note, char),
+    On(char, Note),
     Off(char),
 }
 
@@ -98,58 +100,54 @@ struct CassetteController(Arc<Mutex<CassetteControllerInner>>);
 #[derive(Debug)]
 struct CassetteControllerInner {
     sample_rate: SampleRate,
-    sources: Vec<(char, FadeOut<FadeIn<TakeDuration<SignalGenerator>>>)>,
+    sources: HashMap<char, FadeOut<FadeIn<TakeDuration<SignalGenerator>>>>,
 }
 
 impl CassetteController {
     fn new(sample_rate: SampleRate) -> Self {
         Self(Arc::new(Mutex::new(CassetteControllerInner {
             sample_rate,
-            sources: Vec::default(),
+            sources: HashMap::default(),
         })))
     }
 
     fn on(&self, key: char, note: Note) {
         let mut controller = self.0.lock().unwrap();
-        match controller
-            .sources
-            .iter()
-            .position(|(candidate, _)| *candidate == key)
-        {
-            None => {
-                let sample_rate = controller.sample_rate;
-                controller.sources.push((
-                    key,
+        let sample_rate = controller.sample_rate;
+        match controller.sources.entry(key) {
+            Entry::Vacant(vacant) => {
+                cli_log::info!("on {vacant:?}");
+                vacant.insert(
                     SignalGenerator::new(sample_rate, note.frequency(), Function::Triangle)
                         .take_duration(Duration::from_millis(6_000))
                         .fade_in(Duration::from_millis(60))
                         .fade_out(Duration::from_millis(3_000)),
-                ));
+                );
             }
-            Some(index) => {
-                let new_source = controller.sources[index]
-                    .1
+            Entry::Occupied(occupied) => {
+                cli_log::info!("on {occupied:?}");
+                let source = occupied
+                    .get()
                     .inner()
                     .clone()
                     .fade_out(Duration::from_millis(3_000));
-                let _ = replace(&mut controller.sources[index].1, new_source);
+                let _ = replace(occupied.into_mut(), source);
             }
         }
     }
 
     fn off(&self, key: char) {
-        let mut controller = self.0.lock().unwrap();
-        if let Some(index) = controller
-            .sources
-            .iter()
-            .position(|(candidate, _)| *candidate == key)
-        {
-            let new_source = controller.sources[index]
-                .1
-                .inner()
-                .clone()
-                .fade_out(Duration::from_millis(60));
-            let _ = replace(&mut controller.sources[index].1, new_source);
+        match self.0.lock().unwrap().sources.entry(key) {
+            Entry::Occupied(occupied) => {
+                cli_log::info!("off {occupied:?}");
+                let source = occupied
+                    .get()
+                    .inner()
+                    .clone()
+                    .fade_out(Duration::from_millis(60));
+                let _ = replace(occupied.into_mut(), source);
+            }
+            Entry::Vacant(vacant) => cli_log::error!("off {vacant:?}"),
         }
     }
 }
@@ -207,7 +205,7 @@ impl<'a> Application<'a> {
                         kind: event::KeyEventKind::Press,
                         state,
                     }) => message_tx.send(Message::Quit)?,
-                    _ => {}
+                    event => cli_log::info!("ignored {event:?}"),
                 }
             }
         });
@@ -220,9 +218,8 @@ impl<'a> Application<'a> {
             let controller = tape.controller();
             stream_handle.mixer().add(tape);
             loop {
-                let play = play_rx.recv()?;
-                match play {
-                    Play::On(note, key) => controller.on(key, note),
+                match play_rx.recv()? {
+                    Play::On(key, note) => controller.on(key, note),
                     Play::Off(key) => controller.off(key),
                 }
             }
@@ -237,7 +234,7 @@ impl<'a> Application<'a> {
                     self.tonnetz
                         .note(key)
                         .iter()
-                        .try_for_each(|note| play_tx.send(Play::On(*note, key)))?;
+                        .try_for_each(|note| play_tx.send(Play::On(key, *note)))?;
                 }
                 Message::Release(key) => {
                     self.tonnetz.release(key);
@@ -255,29 +252,29 @@ impl<'a> Application<'a> {
 
 #[derive(Debug)]
 struct KeyCard<'a> {
-    note: Note,
     key: char,
-    block: Option<Block<'a>>,
+    note: Note,
     style: Style,
+    block: Option<Block<'a>>,
 }
 
 impl<'a> KeyCard<'a> {
-    fn new(note: Note, key: char) -> Self {
+    fn new(key: char, note: Note) -> Self {
         Self {
-            note,
             key,
-            block: None,
+            note,
             style: Style::default(),
+            block: None,
         }
-    }
-
-    fn block(mut self, block: Block<'a>) -> Self {
-        self.block = Some(block);
-        self
     }
 
     fn style(mut self, style: impl Into<Style>) -> Self {
         self.style = style.into();
+        self
+    }
+
+    fn block(mut self, block: Block<'a>) -> Self {
+        self.block = Some(block);
         self
     }
 }

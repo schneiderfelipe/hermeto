@@ -12,8 +12,8 @@ pub(super) struct Tonnetz<'a, const N: u8, const K: u8> {
     base_note: Note,
     keyboard_layout: KeyboardLayout,
     pressed: HashSet<char>,
-    block: Option<Block<'a>>,
     style: Style,
+    block: Option<Block<'a>>,
 }
 
 impl<const N: u8, const K: u8> Tonnetz<'_, N, K> {
@@ -22,8 +22,8 @@ impl<const N: u8, const K: u8> Tonnetz<'_, N, K> {
             base_note,
             keyboard_layout: KeyboardLayout::default(),
             pressed: HashSet::default(),
-            block: None,
             style: Style::default(),
+            block: None,
         }
     }
 
@@ -43,10 +43,12 @@ impl<const N: u8, const K: u8> Tonnetz<'_, N, K> {
     }
 
     pub(super) fn press(&mut self, key: char) -> bool {
+        cli_log::info!("pressed {key}");
         self.pressed.insert(key)
     }
 
     pub(super) fn release(&mut self, key: char) -> bool {
+        cli_log::info!("released {key}");
         self.pressed.remove(&key)
     }
 
@@ -105,22 +107,22 @@ impl<const N: u8, const K: u8> Widget for &Tonnetz<'_, N, K> {
                 row.into_iter()
                     .zip(keys_layout.iter().skip(n % 2))
                     .filter_map(|(key, key_layout)| {
-                        key.and_then(|key| self.note(key).map(|note| (note, key, key_layout)))
+                        key.and_then(|key| self.note(key).map(|note| (key, key_layout, note)))
                     })
-                    .for_each(|(note, key, key_layout)| {
+                    .for_each(|(key, key_layout, note)| {
                         buf.set_style(area, self.style);
-                        KeyCard::new(note, key)
-                            .block(self.block.clone().unwrap_or_else(|| {
-                                Block::bordered()
-                                    .border_type(BorderType::Rounded)
-                                    .style(self.style)
-                            }))
+                        KeyCard::new(key, note)
                             .style(self.style)
                             .bg(if self.is_pressed(key) {
                                 Color::Black
                             } else {
                                 Color::Reset
                             })
+                            .block(self.block.clone().unwrap_or_else(|| {
+                                Block::bordered()
+                                    .border_type(BorderType::Rounded)
+                                    .style(self.style)
+                            }))
                             .render(*key_layout, buf);
                     });
             });
