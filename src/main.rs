@@ -1,36 +1,33 @@
 use cli_log::Level;
 use color_eyre::Result;
-use core::{
-    iter::{once, repeat_n},
-    mem::replace,
-    time::Duration,
-};
+use core::{mem::replace, time::Duration};
 use crossterm::{
     event::{
         self, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
 };
-use either::Either;
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
     prelude::BlockExt,
-    style::{Color, Style, Styled, Stylize},
+    style::{Style, Styled, Stylize},
     text::Line,
-    widgets::{Block, BorderType, Widget},
+    widgets::{Block, Widget},
 };
 use rodio::{
     OutputStreamBuilder, Sample, SampleRate, Source,
     source::{FadeIn, FadeOut, Function, SignalGenerator, TakeDuration},
 };
 use std::{
-    collections::HashSet,
     sync::{Arc, Mutex, mpsc},
     thread,
 };
 use tui_big_text::{BigText, PixelSize};
+
+mod tonnetz;
+use crate::tonnetz::Tonnetz;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -261,126 +258,6 @@ impl<'a> Application<'a> {
             }
         }
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-struct Tonnetz<'a, const N: u8, const K: u8> {
-    base_note: Note,
-    keyboard_layout: KeyboardLayout,
-    pressed: HashSet<char>,
-    block: Option<Block<'a>>,
-    style: Style,
-}
-
-impl<const N: u8, const K: u8> Tonnetz<'_, N, K> {
-    fn new(base_note: Note) -> Self {
-        Self {
-            base_note,
-            keyboard_layout: KeyboardLayout::default(),
-            pressed: HashSet::default(),
-            block: None,
-            style: Style::default(),
-        }
-    }
-
-    fn note(&self, key: char) -> Option<Note> {
-        self.keyboard_layout.find(key).map(|(n, k)| {
-            let k = k - n / 2; // adjust for the tilt
-            Note(
-                u8::from(self.base_note)
-                    + N * u8::try_from(n).unwrap()
-                    + K * u8::try_from(k).unwrap(),
-            )
-        })
-    }
-
-    fn keyboard_layout(&self) -> KeyboardLayout {
-        self.keyboard_layout
-    }
-
-    fn press(&mut self, key: char) -> bool {
-        self.pressed.insert(key)
-    }
-
-    fn release(&mut self, key: char) -> bool {
-        self.pressed.remove(&key)
-    }
-
-    fn is_pressed(&self, key: char) -> bool {
-        self.pressed.contains(&key)
-    }
-}
-
-impl<const N: u8, const K: u8> Widget for &Tonnetz<'_, N, K> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.is_empty() {
-            return;
-        }
-
-        buf.set_style(area, self.style);
-        self.block.render(area, buf);
-
-        let area = self.block.inner_if_some(area);
-        let (n_rows, max_n_keys) = self.keyboard_layout.size();
-        let rows_layout = Layout::vertical(Constraint::from_fills(repeat_n(1, n_rows))).split(area);
-        let tilted_rows_layout = if self
-            .keyboard_layout
-            .rows()
-            .into_iter()
-            .enumerate()
-            .filter(|(n, _)| n % 2 == 1)
-            .all(|(_, row_layout)| row_layout.into_iter().last().is_some_and(|c| c.is_none()))
-        {
-            Either::Left(rows_layout.iter().enumerate().map(move |(n, row_layout)| {
-                Layout::horizontal(match n % 2 {
-                    0 => Constraint::from_fills(repeat_n(2, max_n_keys)),
-                    1 => Constraint::from_fills(
-                        once(1).chain(repeat_n(2, max_n_keys - 1)).chain(once(1)),
-                    ),
-                    _ => unreachable!(),
-                })
-                .split(*row_layout)
-            }))
-        } else {
-            Either::Right(rows_layout.iter().enumerate().map(move |(n, row_layout)| {
-                Layout::horizontal(match n % 2 {
-                    0 => Constraint::from_fills(repeat_n(2, max_n_keys).chain(once(1))),
-                    1 => Constraint::from_fills(once(1).chain(repeat_n(2, max_n_keys))),
-                    _ => unreachable!(),
-                })
-                .split(*row_layout)
-            }))
-        };
-
-        self.keyboard_layout
-            .rows()
-            .into_iter()
-            .zip(tilted_rows_layout)
-            .enumerate()
-            .for_each(|(n, (row, keys_layout))| {
-                row.into_iter()
-                    .zip(keys_layout.iter().skip(n % 2))
-                    .filter_map(|(key, key_layout)| {
-                        key.and_then(|key| self.note(key).map(|note| (note, key, key_layout)))
-                    })
-                    .for_each(|(note, key, key_layout)| {
-                        buf.set_style(area, self.style);
-                        KeyCard::new(note, key)
-                            .block(self.block.clone().unwrap_or_else(|| {
-                                Block::bordered()
-                                    .border_type(BorderType::Rounded)
-                                    .style(self.style)
-                            }))
-                            .style(self.style)
-                            .bg(if self.is_pressed(key) {
-                                Color::Black
-                            } else {
-                                Color::Reset
-                            })
-                            .render(*key_layout, buf);
-                    });
-            });
     }
 }
 
