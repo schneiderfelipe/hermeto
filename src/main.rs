@@ -64,11 +64,17 @@ impl Iterator for CassetteTape {
             .lock()
             .unwrap()
             .sources
-            .retain(|_, source| {
-                source.next().is_some_and(|sample| {
-                    total_sample += sample;
-                    true
-                })
+            .retain(|key, source| {
+                source.next().map_or_else(
+                    || {
+                        cli_log::info!("removed {key:?} with {source:?}");
+                        false
+                    },
+                    |sample| {
+                        total_sample += sample;
+                        true
+                    },
+                )
             });
         Some(total_sample)
     }
@@ -126,6 +132,7 @@ impl CassetteController {
             }
             Entry::Occupied(occupied) => {
                 cli_log::info!("on {occupied:?}");
+                // TODO: consider using a dedicated type instead of this wrapped SignalGenerator, as only resetting the fade out does not renew the duration taken
                 let source = occupied
                     .get()
                     .inner()

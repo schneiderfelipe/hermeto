@@ -43,12 +43,12 @@ impl<const N: u8, const K: u8> Tonnetz<'_, N, K> {
     }
 
     pub(super) fn press(&mut self, key: char) -> bool {
-        cli_log::info!("pressed {key}");
+        cli_log::info!("pressed {key:?}");
         self.pressed.insert(key)
     }
 
     pub(super) fn release(&mut self, key: char) -> bool {
-        cli_log::info!("released {key}");
+        cli_log::info!("released {key:?}");
         self.pressed.remove(&key)
     }
 
