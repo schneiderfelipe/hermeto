@@ -173,7 +173,7 @@ struct Application<'a> {
 }
 
 impl<'a> Application<'a> {
-    fn new(tonnetz: Tonnetz<'a, 4, 7>) -> Self {
+    const fn new(tonnetz: Tonnetz<'a, 4, 7>) -> Self {
         Self {
             mode: None,
             tonnetz,
@@ -449,6 +449,10 @@ impl Default for KeyboardLayout {
 }
 
 impl KeyboardLayout {
+    const fn rows(&self) -> [[Option<char>; 14]; 4] {
+        self.rows
+    }
+
     fn contains(&self, key: char) -> bool {
         self.rows()
             .into_iter()
@@ -480,10 +484,6 @@ impl KeyboardLayout {
                 .unwrap_or(0),
         )
     }
-
-    fn rows(&self) -> [[Option<char>; 14]; 4] {
-        self.rows
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -498,7 +498,7 @@ impl From<Note> for u8 {
 
 impl Note {
     fn frequency(self) -> f32 {
-        440.0 * 2_f32.powf((f32::from(self.0) - 69.0) / 12.0)
+        440.0 * ((f32::from(self.0) - 69.0) / 12.0).exp2()
     }
 
     fn names(self) -> (&'static str, Option<&'static str>) {

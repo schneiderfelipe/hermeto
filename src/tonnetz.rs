@@ -27,7 +27,7 @@ impl<const N: u8, const K: u8> Tonnetz<'_, N, K> {
         }
     }
 
-    pub(super) fn keyboard_layout(&self) -> KeyboardLayout {
+    pub(super) const fn keyboard_layout(&self) -> KeyboardLayout {
         self.keyboard_layout
     }
 
