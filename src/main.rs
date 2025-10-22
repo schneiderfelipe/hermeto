@@ -135,7 +135,7 @@ impl CassetteController {
                         .take_duration(Duration::from_millis(6_000))
                         .fade_in(Duration::from_millis(60))
                         .fade_out(Duration::from_millis(3_000)),
-                ))
+                ));
             }
             Some(index) => {
                 let new_source = controller.sources[index]
