@@ -7,7 +7,6 @@ use ratatui::{
 };
 use std::collections::HashSet;
 
-#[derive(Debug)]
 pub(super) struct Tonnetz<'a, const N: u8, const K: u8> {
     base_note: Note,
     keyboard_layout: KeyboardLayout,

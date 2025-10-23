@@ -37,7 +37,6 @@ fn main() -> Result<()> {
     result
 }
 
-#[derive(Debug)]
 struct CassetteTape {
     controller: CassetteController,
 }
@@ -48,8 +47,7 @@ impl CassetteTape {
             controller: CassetteController::new(sample_rate),
         }
     }
-}
-impl CassetteTape {
+
     fn controller(&self) -> CassetteController {
         self.controller.clone()
     }
@@ -95,18 +93,54 @@ impl Source for CassetteTape {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 enum Play {
     On(char, Note),
     Off(char),
 }
 
-#[derive(Clone, Debug)]
-struct CassetteController(Arc<Mutex<CassetteControllerInner>>);
 #[derive(Debug)]
+struct Signal(FadeOut<FadeIn<TakeDuration<SignalGenerator>>>);
+
+impl Signal {
+    fn new(sample_rate: SampleRate, frequency: f32) -> Self {
+        Self(
+            SignalGenerator::new(sample_rate, frequency, Function::Triangle)
+                .take_duration(Duration::from_millis(6_000))
+                .fade_in(Duration::from_millis(60))
+                .fade_out(Duration::from_millis(3_000)),
+        )
+    }
+
+    fn sustain(&mut self) {
+        // BUG: only resetting the fade out does not renew the duration taken
+        let source = self
+            .0
+            .inner()
+            .clone()
+            .fade_out(Duration::from_millis(3_000));
+        let _ = replace(&mut self.0, source);
+    }
+
+    fn release(&mut self) {
+        let source = self.0.inner().clone().fade_out(Duration::from_millis(60));
+        let _ = replace(&mut self.0, source);
+    }
+}
+
+impl Iterator for Signal {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
+
+#[derive(Clone)]
+struct CassetteController(Arc<Mutex<CassetteControllerInner>>);
 struct CassetteControllerInner {
     sample_rate: SampleRate,
-    sources: HashMap<char, FadeOut<FadeIn<TakeDuration<SignalGenerator>>>>,
+    sources: HashMap<char, Signal>,
 }
 
 impl CassetteController {
@@ -123,55 +157,38 @@ impl CassetteController {
         match controller.sources.entry(key) {
             Entry::Vacant(vacant) => {
                 cli_log::info!("on {vacant:?}");
-                vacant.insert(
-                    SignalGenerator::new(sample_rate, note.frequency(), Function::Triangle)
-                        .take_duration(Duration::from_millis(6_000))
-                        .fade_in(Duration::from_millis(60))
-                        .fade_out(Duration::from_millis(3_000)),
-                );
+                vacant.insert(Signal::new(sample_rate, note.frequency()));
             }
-            Entry::Occupied(occupied) => {
+            Entry::Occupied(mut occupied) => {
                 cli_log::info!("on {occupied:?}");
-                // TODO: consider using a dedicated type instead of this wrapped SignalGenerator, as only resetting the fade out does not renew the duration taken
-                let source = occupied
-                    .get()
-                    .inner()
-                    .clone()
-                    .fade_out(Duration::from_millis(3_000));
-                let _ = replace(occupied.into_mut(), source);
+                occupied.get_mut().sustain();
             }
         }
     }
 
     fn off(&self, key: char) {
         match self.0.lock().unwrap().sources.entry(key) {
-            Entry::Occupied(occupied) => {
+            Entry::Occupied(mut occupied) => {
                 cli_log::info!("off {occupied:?}");
-                let source = occupied
-                    .get()
-                    .inner()
-                    .clone()
-                    .fade_out(Duration::from_millis(60));
-                let _ = replace(occupied.into_mut(), source);
+                occupied.get_mut().release();
             }
             Entry::Vacant(vacant) => cli_log::error!("off {vacant:?}"),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 enum Message {
     Press(char),
     Release(char),
     Quit,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 enum Mode {
     Running,
 }
 
-#[derive(Debug)]
 struct Application<'a> {
     mode: Option<Mode>,
     tonnetz: Tonnetz<'a, 4, 7>,
@@ -257,7 +274,6 @@ impl<'a> Application<'a> {
     }
 }
 
-#[derive(Debug)]
 struct KeyCard<'a> {
     key: char,
     note: Note,
@@ -374,7 +390,7 @@ impl Widget for &KeyCard<'_> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 struct KeyboardLayout {
     rows: [[Option<char>; 14]; 4],
 }
@@ -490,7 +506,7 @@ impl KeyboardLayout {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 #[repr(transparent)]
 struct Note(u8);
 
