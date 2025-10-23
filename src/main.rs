@@ -100,31 +100,27 @@ enum Play {
 }
 
 #[derive(Debug)]
-struct Signal(FadeOut<FadeIn<TakeDuration<SignalGenerator>>>);
+struct Signal(TakeDuration<FadeOut<FadeIn<SignalGenerator>>>);
 
 impl Signal {
-    fn new(sample_rate: SampleRate, frequency: f32) -> Self {
+    const DURATION: Duration = Duration::from_millis(512 + 2);
+
+    fn new(sample_rate: SampleRate, note: Note) -> Self {
         Self(
-            SignalGenerator::new(sample_rate, frequency, Function::Triangle)
-                .take_duration(Duration::from_millis(6_000))
-                .fade_in(Duration::from_millis(60))
-                .fade_out(Duration::from_millis(3_000)),
+            SignalGenerator::new(sample_rate, note.frequency(), Function::Triangle)
+                .fade_in(Self::DURATION / 512)
+                .fade_out(16 * Self::DURATION)
+                .take_duration(Self::DURATION),
         )
     }
 
     fn sustain(&mut self) {
-        // BUG: only resetting the fade out does not renew the duration taken
-        let source = self
-            .0
-            .inner()
-            .clone()
-            .fade_out(Duration::from_millis(3_000));
+        let source = self.0.inner().clone().take_duration(Self::DURATION);
         let _ = replace(&mut self.0, source);
     }
 
     fn release(&mut self) {
-        let source = self.0.inner().clone().fade_out(Duration::from_millis(60));
-        let _ = replace(&mut self.0, source);
+        self.0.set_filter_fadeout();
     }
 }
 
@@ -157,7 +153,7 @@ impl CassetteController {
         match controller.sources.entry(key) {
             Entry::Vacant(vacant) => {
                 cli_log::info!("on {vacant:?}");
-                vacant.insert(Signal::new(sample_rate, note.frequency()));
+                vacant.insert(Signal::new(sample_rate, note));
             }
             Entry::Occupied(mut occupied) => {
                 cli_log::info!("on {occupied:?}");
