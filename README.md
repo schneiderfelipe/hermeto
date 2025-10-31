@@ -1,8 +1,8 @@
-# tonnetz
+# hermeto
 
 This is my idea for a (toy) terminal musical instrument.
 
-[Tonnetz is a conceptual lattice diagram representing tonal space](https://en.wikipedia.org/wiki/Tonnetz).
+It is based on [tonnetz](https://en.wikipedia.org/wiki/Tonnetz), a conceptual lattice diagram representing tonal space.
 The idea is to draw one on the screen, mapping the diagram on the screen to the keyboard.
 When the user presses keys mapped to the diagram, pure sine waves representing the respective musical notes are played.
 This is our minimum viable product.

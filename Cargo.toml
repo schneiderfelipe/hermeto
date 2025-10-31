@@ -1,15 +1,17 @@
 [package]
-name = "tonnetz"
-version = "0.1.0"
+name = "hermeto"
+version = "0.2.0"
 description = "A (toy) terminal musical instrument"
+repository = "https://github.com/schneiderfelipe/hermeto"
 authors = ["Felipe S. S. Schneider <schneider.felipe.5@gmail.com>"]
 license = "MIT"
 edition = "2024"
 
 [dependencies]
-crossterm = "0.29.0"
-ratatui = "0.29.0"
+cli-log = "2.1.0"
 color-eyre = "0.6.3"
-rodio = "0.21.1"
+crossterm = "0.29.0"
 either = "1.15.0"
+ratatui = "0.29.0"
+rodio = "0.21.1"
 tui-big-text = "0.7.1"

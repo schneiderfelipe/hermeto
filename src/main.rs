@@ -1,88 +1,216 @@
+use cli_log::Level;
 use color_eyre::Result;
-use core::{
-    iter::{once, repeat_n},
-    time::Duration,
-};
+use core::{mem::replace, time::Duration};
 use crossterm::{
     event::{
         self, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
 };
-use either::Either;
-use ratatui::{
-    DefaultTerminal,
-    buffer::Buffer,
-    layout::{Constraint, Layout, Rect},
-    prelude::BlockExt,
-    style::{Color, Style, Styled, Stylize},
-    text::Line,
-    widgets::{Block, BorderType, Widget},
-};
+use ratatui::{DefaultTerminal, prelude::*, style::Styled, widgets::Block};
 use rodio::{
-    OutputStreamBuilder, Source,
-    source::{Function, SignalGenerator},
+    OutputStreamBuilder, Sample, SampleRate, Source,
+    source::{FadeIn, FadeOut, Function, SignalGenerator, TakeDuration},
 };
-use std::{collections::HashSet, sync::mpsc, thread};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    sync::{Arc, Mutex, mpsc},
+    thread,
+};
 use tui_big_text::{BigText, PixelSize};
+
+mod tonnetz;
+use crate::tonnetz::Tonnetz;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
+    cli_log::init_cli_log!();
     let mut terminal = ratatui::init();
     execute!(
         terminal.backend_mut(),
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
     )?;
-    let result = Application::new(Tonnetz::new(Note(21))).run(&mut terminal);
+    let result = Application::<4, 7>::new(Tonnetz::new(Note(21))).run(&mut terminal);
     execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     ratatui::restore();
+    cli_log::log_mem(Level::Info);
     result
 }
 
+struct CassetteTape {
+    controller: CassetteController,
+}
+
+impl CassetteTape {
+    fn new(sample_rate: SampleRate) -> Self {
+        Self {
+            controller: CassetteController::new(sample_rate),
+        }
+    }
+
+    fn controller(&self) -> CassetteController {
+        self.controller.clone()
+    }
+}
+
+impl Iterator for CassetteTape {
+    type Item = Sample;
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut total_sample = 0.0;
+        self.controller
+            .0
+            .lock()
+            .unwrap()
+            .sources
+            .retain(|key, source| {
+                source.next().map_or_else(
+                    || {
+                        cli_log::info!("removed {key:?} with {source:?}");
+                        false
+                    },
+                    |sample| {
+                        total_sample += sample;
+                        true
+                    },
+                )
+            });
+        Some(total_sample)
+    }
+}
+
+impl Source for CassetteTape {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+    fn channels(&self) -> rodio::ChannelCount {
+        1
+    }
+    fn sample_rate(&self) -> rodio::SampleRate {
+        self.controller.0.lock().unwrap().sample_rate
+    }
+    fn total_duration(&self) -> Option<Duration> {
+        None
+    }
+}
+
+#[derive(Clone)]
+enum Play {
+    On(char, Note),
+    Off(char),
+}
+
 #[derive(Debug)]
+struct Signal(TakeDuration<FadeOut<FadeIn<SignalGenerator>>>);
+
+impl Signal {
+    const DURATION: Duration = Duration::from_millis(512 + 2);
+
+    fn new(sample_rate: SampleRate, note: Note) -> Self {
+        Self(
+            SignalGenerator::new(sample_rate, note.frequency(), Function::Triangle)
+                .fade_in(Self::DURATION / 512)
+                .fade_out(16 * Self::DURATION)
+                .take_duration(Self::DURATION),
+        )
+    }
+
+    fn sustain(&mut self) {
+        let source = self.0.inner().clone().take_duration(Self::DURATION);
+        let _ = replace(&mut self.0, source);
+    }
+
+    fn release(&mut self) {
+        self.0.set_filter_fadeout();
+    }
+}
+
+impl Iterator for Signal {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
+
+#[derive(Clone)]
+struct CassetteController(Arc<Mutex<CassetteControllerInner>>);
+struct CassetteControllerInner {
+    sample_rate: SampleRate,
+    sources: HashMap<char, Signal>,
+}
+
+impl CassetteController {
+    fn new(sample_rate: SampleRate) -> Self {
+        Self(Arc::new(Mutex::new(CassetteControllerInner {
+            sample_rate,
+            sources: HashMap::default(),
+        })))
+    }
+
+    fn on(&self, key: char, note: Note) {
+        let mut controller = self.0.lock().unwrap();
+        let sample_rate = controller.sample_rate;
+        match controller.sources.entry(key) {
+            Entry::Vacant(vacant) => {
+                cli_log::info!("on {vacant:?}");
+                vacant.insert(Signal::new(sample_rate, note));
+            }
+            Entry::Occupied(mut occupied) => {
+                cli_log::info!("on {occupied:?}");
+                occupied.get_mut().sustain();
+            }
+        }
+    }
+
+    fn off(&self, key: char) {
+        match self.0.lock().unwrap().sources.entry(key) {
+            Entry::Occupied(mut occupied) => {
+                cli_log::info!("off {occupied:?}");
+                occupied.get_mut().release();
+            }
+            Entry::Vacant(vacant) => cli_log::error!("off {vacant:?}"),
+        }
+    }
+}
+
+#[derive(Clone)]
 enum Message {
-    Quit,
     Press(char),
     Release(char),
+    Quit,
 }
 
-#[derive(Debug)]
-struct Application<'a> {
-    tonnetz: Tonnetz<'a, 4, 7>,
-    is_running: bool,
+#[derive(Clone, Copy)]
+enum Mode {
+    Running,
 }
 
-impl<'a> Application<'a> {
-    fn new(tonnetz: Tonnetz<'a, 4, 7>) -> Self {
+struct Application<'a, const N: u8, const K: u8> {
+    mode: Option<Mode>,
+    tonnetz: Tonnetz<'a, N, K>,
+}
+
+impl<'a, const N: u8, const K: u8> Application<'a, N, K> {
+    const fn new(tonnetz: Tonnetz<'a, N, K>) -> Self {
         Self {
+            mode: None,
             tonnetz,
-            is_running: false,
         }
     }
 
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        self.is_running = true;
+        self.mode = Some(Mode::Running);
         let (message_tx, message_rx) = mpsc::channel();
         let keyboard_layout = self.tonnetz.keyboard_layout();
         thread::spawn(move || -> Result<()> {
             loop {
                 match event::read()? {
                     event::Event::Key(event::KeyEvent {
-                        code: event::KeyCode::Esc,
-                        modifiers,
-                        kind: event::KeyEventKind::Press,
-                        state,
-                    }) => {
-                        message_tx.send(Message::Quit)?;
-                    }
-                    event::Event::Key(event::KeyEvent {
                         code: event::KeyCode::Char(key),
                         modifiers,
                         kind: event::KeyEventKind::Press,
                         state,
-                    }) if keyboard_layout.contains(key) => {
-                        message_tx.send(Message::Press(key))?;
-                    }
+                    }) if keyboard_layout.contains(key) => message_tx.send(Message::Press(key))?,
                     event::Event::Key(event::KeyEvent {
                         code: event::KeyCode::Char(key),
                         modifiers,
@@ -91,190 +219,81 @@ impl<'a> Application<'a> {
                     }) if keyboard_layout.contains(key) => {
                         message_tx.send(Message::Release(key))?;
                     }
-                    _ => (),
+                    event::Event::Key(event::KeyEvent {
+                        code: event::KeyCode::Esc,
+                        modifiers,
+                        kind: event::KeyEventKind::Press,
+                        state,
+                    }) => message_tx.send(Message::Quit)?,
+                    event => cli_log::info!("ignored {event:?}"),
                 }
             }
         });
-        let (frequency_tx, frequency_rx) = mpsc::channel();
+        let (play_tx, play_rx) = mpsc::channel();
         thread::spawn(move || -> Result<()> {
+            // TODO: consider using a Sink after we have our own system
             let stream_handle = OutputStreamBuilder::open_default_stream()?;
+            let sample_rate = stream_handle.config().sample_rate();
+            let tape = CassetteTape::new(sample_rate);
+            let controller = tape.controller();
+            stream_handle.mixer().add(tape);
             loop {
-                let frequency = frequency_rx.recv()?;
-                stream_handle.mixer().add(
-                    SignalGenerator::new(
-                        stream_handle.config().sample_rate(),
-                        frequency,
-                        Function::Triangle,
-                    )
-                    .amplify_normalized(0.2)
-                    .take_duration(Duration::from_millis(1000)),
-                );
+                match play_rx.recv()? {
+                    Play::On(key, note) => controller.on(key, note),
+                    Play::Off(key) => controller.off(key),
+                }
             }
         });
-        while self.is_running {
-            terminal.draw(|frame| {
-                frame.render_widget(&self.tonnetz, frame.area());
+        while let Some(mode) = self.mode {
+            terminal.draw(|frame| match mode {
+                Mode::Running => frame.render_widget(&self.tonnetz, frame.area()),
             })?;
             match message_rx.recv()? {
-                Message::Quit => self.is_running = false,
                 Message::Press(key) => {
                     self.tonnetz.press(key);
                     self.tonnetz
                         .note(key)
                         .iter()
-                        .try_for_each(|note| frequency_tx.send(note.frequency()))?;
+                        .try_for_each(|note| play_tx.send(Play::On(key, *note)))?;
                 }
                 Message::Release(key) => {
                     self.tonnetz.release(key);
+                    self.tonnetz
+                        .note(key)
+                        .iter()
+                        .try_for_each(|_| play_tx.send(Play::Off(key)))?;
                 }
+                Message::Quit => self.mode = None,
             }
         }
         Ok(())
     }
 }
 
-#[derive(Debug)]
-struct Tonnetz<'a, const N: u8, const K: u8> {
-    base_note: Note,
-    keyboard_layout: KeyboardLayout,
-    pressed: HashSet<char>,
-    block: Option<Block<'a>>,
-    style: Style,
-}
-
-impl<const N: u8, const K: u8> Tonnetz<'_, N, K> {
-    fn new(base_note: Note) -> Self {
-        Self {
-            base_note,
-            keyboard_layout: KeyboardLayout::default(),
-            pressed: HashSet::default(),
-            block: None,
-            style: Style::default(),
-        }
-    }
-
-    fn note(&self, key: char) -> Option<Note> {
-        self.keyboard_layout.find(key).map(|(n, k)| {
-            let k = k - n / 2; // adjust for the tilt
-            Note(
-                u8::from(self.base_note)
-                    + N * u8::try_from(n).unwrap()
-                    + K * u8::try_from(k).unwrap(),
-            )
-        })
-    }
-
-    fn keyboard_layout(&self) -> KeyboardLayout {
-        self.keyboard_layout
-    }
-
-    fn press(&mut self, key: char) -> bool {
-        self.pressed.insert(key)
-    }
-
-    fn release(&mut self, key: char) -> bool {
-        self.pressed.remove(&key)
-    }
-
-    fn is_pressed(&self, key: char) -> bool {
-        self.pressed.contains(&key)
-    }
-}
-
-impl<const N: u8, const K: u8> Widget for &Tonnetz<'_, N, K> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.is_empty() {
-            return;
-        }
-
-        buf.set_style(area, self.style);
-        self.block.render(area, buf);
-
-        let area = self.block.inner_if_some(area);
-        let (n_rows, max_n_keys) = self.keyboard_layout.size();
-        let rows_layout = Layout::vertical(Constraint::from_fills(repeat_n(1, n_rows))).split(area);
-        let tilted_rows_layout = if self
-            .keyboard_layout
-            .rows()
-            .into_iter()
-            .enumerate()
-            .filter(|(n, _)| n % 2 == 1)
-            .all(|(_, row_layout)| row_layout.into_iter().last().is_some_and(|c| c.is_none()))
-        {
-            Either::Left(rows_layout.iter().enumerate().map(move |(n, row_layout)| {
-                Layout::horizontal(match n % 2 {
-                    0 => Constraint::from_fills(repeat_n(2, max_n_keys)),
-                    1 => Constraint::from_fills(
-                        once(1).chain(repeat_n(2, max_n_keys - 1)).chain(once(1)),
-                    ),
-                    _ => unreachable!(),
-                })
-                .split(*row_layout)
-            }))
-        } else {
-            Either::Right(rows_layout.iter().enumerate().map(move |(n, row_layout)| {
-                Layout::horizontal(match n % 2 {
-                    0 => Constraint::from_fills(repeat_n(2, max_n_keys).chain(once(1))),
-                    1 => Constraint::from_fills(once(1).chain(repeat_n(2, max_n_keys))),
-                    _ => unreachable!(),
-                })
-                .split(*row_layout)
-            }))
-        };
-
-        self.keyboard_layout
-            .rows()
-            .into_iter()
-            .zip(tilted_rows_layout)
-            .enumerate()
-            .for_each(|(n, (row, keys_layout))| {
-                row.into_iter()
-                    .zip(keys_layout.iter().skip(n % 2))
-                    .filter_map(|(key, key_layout)| {
-                        key.and_then(|key| self.note(key).map(|note| (note, key, key_layout)))
-                    })
-                    .for_each(|(note, key, key_layout)| {
-                        buf.set_style(area, self.style);
-                        KeyCard::new(note, key)
-                            .block(self.block.clone().unwrap_or_else(|| {
-                                Block::bordered().border_type(BorderType::Rounded)
-                            }))
-                            .bg(if self.is_pressed(key) {
-                                Color::Black
-                            } else {
-                                Color::Reset
-                            })
-                            .render(*key_layout, buf);
-                    });
-            });
-    }
-}
-
-#[derive(Debug)]
 struct KeyCard<'a> {
-    note: Note,
     key: char,
-    block: Option<Block<'a>>,
+    note: Note,
     style: Style,
+    block: Option<Block<'a>>,
 }
 
 impl<'a> KeyCard<'a> {
-    fn new(note: Note, key: char) -> Self {
+    fn new(key: char, note: Note) -> Self {
         Self {
-            note,
             key,
-            block: None,
+            note,
             style: Style::default(),
+            block: None,
         }
-    }
-
-    fn block(mut self, block: Block<'a>) -> Self {
-        self.block = Some(block);
-        self
     }
 
     fn style(mut self, style: impl Into<Style>) -> Self {
         self.style = style.into();
+        self
+    }
+
+    fn block(mut self, block: Block<'a>) -> Self {
+        self.block = Some(block);
         self
     }
 }
@@ -348,23 +367,26 @@ impl Widget for &KeyCard<'_> {
         buf.set_style(area, self.style);
         Line::from(u8::from(self.note).to_string())
             .left_aligned()
-            .style(self.style.dim())
+            .style(self.style)
             .render(bottom_layout[0], buf);
 
         buf.set_style(area, self.style);
         let frequency = self.note.frequency();
         Line::from(format!("{frequency:.3} Hz"))
             .right_aligned()
-            .style(if 20.0 < frequency || frequency > 20_000.0 {
-                self.style.dim()
-            } else {
-                self.style.dim().red()
-            })
+            .style(
+                if 20.0 < frequency || frequency > 20_000.0 {
+                    self.style
+                } else {
+                    self.style.red()
+                }
+                .dim(),
+            )
             .render(bottom_layout[1], buf);
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 struct KeyboardLayout {
     rows: [[Option<char>; 14]; 4],
 }
@@ -443,6 +465,10 @@ impl Default for KeyboardLayout {
 }
 
 impl KeyboardLayout {
+    const fn rows(&self) -> [[Option<char>; 14]; 4] {
+        self.rows
+    }
+
     fn contains(&self, key: char) -> bool {
         self.rows()
             .into_iter()
@@ -474,13 +500,9 @@ impl KeyboardLayout {
                 .unwrap_or(0),
         )
     }
-
-    fn rows(&self) -> [[Option<char>; 14]; 4] {
-        self.rows
-    }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 #[repr(transparent)]
 struct Note(u8);
 
@@ -492,7 +514,7 @@ impl From<Note> for u8 {
 
 impl Note {
     fn frequency(self) -> f32 {
-        440.0 * 2_f32.powf((f32::from(self.0) - 69.0) / 12.0)
+        440.0 * ((f32::from(self.0) - 69.0) / 12.0).exp2()
     }
 
     fn names(self) -> (&'static str, Option<&'static str>) {
