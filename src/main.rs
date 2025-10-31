@@ -30,7 +30,7 @@ fn main() -> Result<()> {
         terminal.backend_mut(),
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
     )?;
-    let result = Application::new(Tonnetz::new(Note(21))).run(&mut terminal);
+    let result = Application::<4, 7>::new(Tonnetz::new(Note(21))).run(&mut terminal);
     execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     ratatui::restore();
     cli_log::log_mem(Level::Info);
@@ -185,13 +185,13 @@ enum Mode {
     Running,
 }
 
-struct Application<'a> {
+struct Application<'a, const N: u8, const K: u8> {
     mode: Option<Mode>,
-    tonnetz: Tonnetz<'a, 4, 7>,
+    tonnetz: Tonnetz<'a, N, K>,
 }
 
-impl<'a> Application<'a> {
-    const fn new(tonnetz: Tonnetz<'a, 4, 7>) -> Self {
+impl<'a, const N: u8, const K: u8> Application<'a, N, K> {
+    const fn new(tonnetz: Tonnetz<'a, N, K>) -> Self {
         Self {
             mode: None,
             tonnetz,
