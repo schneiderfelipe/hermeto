@@ -115,11 +115,13 @@ impl Signal {
     }
 
     fn sustain(&mut self) {
+        // TODO: should we remove the filter fadeout?
         let source = self.0.inner().clone().take_duration(Self::DURATION);
         let _ = replace(&mut self.0, source);
     }
 
     fn release(&mut self) {
+        // TODO: should we set a shorter duration with take_duration?
         self.0.set_filter_fadeout();
     }
 }
