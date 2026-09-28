@@ -163,9 +163,9 @@ dependencies = [
 
 [[package]]
 name = "cli-log"
-version = "2.1.0"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e220aa46e5395cd473a054f8e7e52403108ce147a4eb68c001afb01672a4e046"
+checksum = "48fa54dda053e0ea26b58cb15faa3bb5a9a8a77c025055d98bfe1ff7b52ae974"
 dependencies = [
  "chrono",
  "file-size",
@@ -1066,11 +1066,11 @@ dependencies = [
 
 [[package]]
 name = "proc-status"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0e0c0ac915e7b76b47850ba4ffc377abde6c6ff9eeace61d0a89623db449712"
+checksum = "62081f34d4a69433189c4d5a862c3f6243d68789c449e981189a458cdfde079c"
 dependencies = [
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
